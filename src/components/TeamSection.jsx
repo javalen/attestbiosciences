@@ -209,14 +209,14 @@ function SocialLinks({ socials }) {
 
 function MemberCard({ m, onMemberClick }) {
   return (
-    <div className="p-5">
+    <div className="">
       <motion.div
         layout
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -12 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
-        className="p-10"
+        className=""
       >
         <Card className="h-full rounded-2xl border border-border/60 shadow-sm hover:shadow-md transition overflow-hidden">
           <CardHeader className="flex flex-row items-center gap-4">
