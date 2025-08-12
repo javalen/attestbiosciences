@@ -11,6 +11,7 @@ import TeamSection from "./components/TeamSection";
 import { TestsIndex } from "./components/TestComponent";
 import { TestDetail } from "./components/TestComponent";
 import AuthPage from "./components/AuthPage";
+import TestimonialNew from "./components/TestimonialNew";
 
 const App = () => {
   return (
@@ -39,6 +40,7 @@ const App = () => {
         <Route path="/tests" element={<TestsIndex />} />
         <Route path="/tests/:id" element={<TestDetail />} />
         <Route path="/login" element={<AuthPage />} />
+        <Route path="/testimonials/new" element={<TestimonialNew />} />
       </Routes>
 
       <Footer />
