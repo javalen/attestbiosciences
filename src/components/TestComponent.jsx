@@ -7,14 +7,9 @@ import {
   FlaskConical,
   Info,
   ChevronDown,
+  Loader2,
 } from "lucide-react";
 import pb from "@/db/pocketbase";
-
-/**
- * Configure your PocketBase URL here (or via Vite env: VITE_PB_URL)
- * Example for Fly.io: https://<your-app>.fly.dev
- */
-const PB_URL = import.meta.env.VITE_PB_URL || "http://localhost:8090";
 
 /** Utils **/
 const formatUSD = (val) => {
@@ -147,7 +142,7 @@ export function TestsIndex() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-sky-900">
-              Available Tests
+              Tests
             </h1>
             <p className="text-slate-600">
               Browse our catalog by category. Tap any card for details.
@@ -197,26 +192,35 @@ function TestCard({ test, showCategory = true }) {
   const navigate = useNavigate();
   const catName = getCatName(test);
   const available = isAvailable(test);
+
   return (
     <button
       onClick={() => navigate(`/tests/${test.id}`)}
-      className={`group text-left rounded-2xl border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow focus:outline-none focus:ring-2 focus:ring-sky-300 ${
-        available ? "" : "opacity-90"
-      }`}
+      className={`group text-left rounded-2xl border border-slate-200 bg-white shadow-sm
+        transition-all duration-200
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400
+        hover:-translate-y-0.5 hover:shadow-lg hover:border-sky-300 hover:bg-sky-50
+        ${available ? "" : "opacity-90"}`}
     >
       <div className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-sky-50 text-sky-700">
+            <div
+              className="p-2 rounded-xl bg-sky-50 text-sky-700 transition-colors
+                            group-hover:bg-sky-100 group-hover:text-sky-800"
+            >
               <FlaskConical className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-semibold text-slate-900">
+            <h3 className="text-lg font-semibold text-slate-900 transition-colors group-hover:text-sky-900">
               {test.name}
             </h3>
           </div>
           <div className="flex items-center gap-2">
             {showCategory && (
-              <span className="text-sm font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
+              <span
+                className="text-sm font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-700
+                               transition-colors group-hover:bg-sky-100 group-hover:text-sky-800"
+              >
                 {catName}
               </span>
             )}
@@ -227,6 +231,7 @@ function TestCard({ test, showCategory = true }) {
             )}
           </div>
         </div>
+
         <p className="mt-3 text-slate-600 min-h-[3rem]">
           {truncate(test.description)}
         </p>
@@ -236,9 +241,13 @@ function TestCard({ test, showCategory = true }) {
           </p>
         )}
       </div>
+
       <div className="px-5 pb-5 flex items-center justify-between">
         <span className="text-sky-900 font-bold">{formatUSD(test.cost)}</span>
-        <span className="inline-flex items-center gap-1 text-sky-700 group-hover:gap-2 transition-all">
+        <span
+          className="inline-flex items-center gap-1 text-sky-700 transition-all
+                         group-hover:gap-2 group-hover:text-sky-800"
+        >
           View details <ArrowRight className="w-4 h-4" />
         </span>
       </div>
@@ -262,6 +271,46 @@ function InfoAccordionSection({ title, text }) {
   );
 }
 
+async function getOrCreateOpenCart(userId) {
+  // Try to find an open cart for this user
+  try {
+    return await pb
+      .collection("cart")
+      .getFirstListItem(`user = "${userId}" && status = "open"`);
+  } catch (err) {
+    // If none exists, create one
+    if (err?.status === 404 || /not found/i.test(err?.message || "")) {
+      return await pb.collection("cart").create({
+        user: userId,
+        status: "open",
+        last_activity_at: new Date().toISOString(),
+      });
+    }
+    throw err;
+  }
+}
+
+async function addTestToCart(userId, testId) {
+  const cart = await getOrCreateOpenCart(userId);
+  const current = Array.isArray(cart.test)
+    ? cart.test.slice()
+    : cart.test
+    ? [cart.test]
+    : [];
+
+  if (current.includes(testId)) {
+    // already in cart; no-op
+    return { cartId: cart.id, already: true };
+  }
+
+  const updated = await pb.collection("cart").update(cart.id, {
+    test: [...current, testId],
+    last_activity_at: new Date().toISOString(),
+  });
+
+  return { cartId: updated.id, already: false };
+}
+
 /**
  * Detail page: shows a single test by ID with expanded category
  */
@@ -270,6 +319,28 @@ export function TestDetail() {
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addMsg, setAddMsg] = useState("");
+  const [addErr, setAddErr] = useState("");
+  const navigate = useNavigate();
+
+  async function handleAddToCart() {
+    setAddMsg("");
+    setAddErr("");
+    if (!pb.authStore.isValid || !pb.authStore.model) {
+      // send them to login and come back here after
+      return navigate("/login", { state: { redirectTo: `/tests/${id}` } });
+    }
+    try {
+      setAdding(true);
+      const { already } = await addTestToCart(pb.authStore.model.id, item.id);
+      setAddMsg(already ? "Already in your cart." : "Added to your cart.");
+    } catch (e) {
+      setAddErr(e?.message || "Could not add to cart.");
+    } finally {
+      setAdding(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -396,19 +467,35 @@ export function TestDetail() {
                 Currently unavailable.
               </div>
             )}
+            {addMsg && (
+              <div className="mt-3 text-sm text-emerald-700">{addMsg}</div>
+            )}
+
+            {addErr && (
+              <div className="mt-3 text-sm text-red-700">{addErr}</div>
+            )}
+
             <div className="mt-6 grid gap-3">
               <button
-                disabled={!available}
+                onClick={handleAddToCart}
+                disabled={!available || adding}
                 className={`inline-flex justify-center items-center gap-2 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-sky-300 ${
-                  available
+                  available && !adding
                     ? "bg-sky-600 hover:bg-sky-700"
                     : "bg-slate-400 cursor-not-allowed"
                 }`}
               >
                 {available ? (
-                  <>
-                    Order this test <ArrowRight className="w-4 h-4" />
-                  </>
+                  adding ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Adding…
+                    </>
+                  ) : (
+                    <>
+                      Order this test <ArrowRight className="w-4 h-4" />
+                    </>
+                  )
                 ) : (
                   <>Order unavailable</>
                 )}
