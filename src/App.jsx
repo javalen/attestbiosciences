@@ -1,3 +1,4 @@
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import About from "./components/About";
 import BookAppointment from "./components/BookAppointment";
 import Footer from "./components/Footer";
@@ -7,20 +8,39 @@ import Services from "./components/Services";
 import Testimonials from "./components/Testimonials";
 import Tips from "./components/Tips";
 import TeamSection from "./components/TeamSection";
+import { TestsIndex } from "./components/TestComponent";
+import { TestDetail } from "./components/TestComponent";
 
 const App = () => {
   return (
-    <div>
+    <Router>
       <Header />
-      <Hero />
-      <Services />
-      <About />
-      <Tips />
-      <BookAppointment />
-      <Testimonials />
-      <TeamSection />
+
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <>
+              <Hero />
+              <Services />
+              <Tips />
+              <Testimonials />
+              <TeamSection />
+            </>
+          }
+        />
+        <Route path="/about" element={<About />} />
+        <Route path="/book" element={<BookAppointment />} />
+        <Route path="/services" element={<Services />} />
+        <Route path="/tips" element={<Tips />} />
+        <Route path="/testimonials" element={<Testimonials />} />
+        <Route path="/team" element={<TeamSection />} />
+        <Route path="/tests" element={<TestsIndex />} />
+        <Route path="/tests/:id" element={<TestDetail />} />
+      </Routes>
+
       <Footer />
-    </div>
+    </Router>
   );
 };
 
