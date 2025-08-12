@@ -110,19 +110,19 @@ const demoTeam = [
       website: "https://example.com",
     },
   },
-  {
-    id: 6,
-    name: "Alexis Welch-Hoyos",
-    role: "Tech Consultant & Board Member",
-    bio: "Alexis Welch-Hoyos is a Tech Consultant and Board Member at Attest BioSciences, bringing her expertise in biomedical engineering and technology development. With a background as a device safety engineer and quality engineer at Abbott, Alexis has a strong foundation in ensuring the safety and reliability of medical devices. Her experience in analyzing and addressing device performance issues has equipped her with a keen eye for quality and innovation. At Attest BioSciences, Alexis provides strategic insights on the technological aspects of the company's services, helping to keep the company at the forefront of health tech innovation. Her role on the board also offers valuable perspectives on leveraging technology to enhance customer experience and streamline operations.",
-    image: alexis,
-    tags: ["Ops", "Security", "Privacy"],
-    socials: {
-      linkedin: "https://www.linkedin.com/",
-      website: "https://example.com",
-      email: "noah@example.com",
-    },
-  },
+  // {
+  //   id: 6,
+  //   name: "Alexis Welch-Hoyos",
+  //   role: "Tech Consultant & Board Member",
+  //   bio: "Alexis Welch-Hoyos is a Tech Consultant and Board Member at Attest BioSciences, bringing her expertise in biomedical engineering and technology development. With a background as a device safety engineer and quality engineer at Abbott, Alexis has a strong foundation in ensuring the safety and reliability of medical devices. Her experience in analyzing and addressing device performance issues has equipped her with a keen eye for quality and innovation. At Attest BioSciences, Alexis provides strategic insights on the technological aspects of the company's services, helping to keep the company at the forefront of health tech innovation. Her role on the board also offers valuable perspectives on leveraging technology to enhance customer experience and streamline operations.",
+  //   image: alexis,
+  //   tags: ["Ops", "Security", "Privacy"],
+  //   socials: {
+  //     linkedin: "https://www.linkedin.com/",
+  //     website: "https://example.com",
+  //     email: "noah@example.com",
+  //   },
+  // },
 ];
 
 function initials(name = "") {
