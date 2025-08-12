@@ -54,10 +54,10 @@ const BookAppointment = () => {
         {/* Header */}
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold text-gray-800 mb-3">
-            PreOrder your test today
+            Questions about testing?
           </h1>
           <p className="text-lg text-gray-600">
-            Talk with a professional to discuss what test are right for you.
+            Talk with a professional to discuss what testing can do for you.
           </p>
         </div>
 

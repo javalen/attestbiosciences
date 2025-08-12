@@ -9,6 +9,8 @@ import {
   AlertCircle,
 } from "lucide-react";
 import pb from "@/db/pocketbase";
+const API_KEY = import.meta.env.VITE_PUBLIC_GOOGLE_PLACES_API;
+import PlacesAddressInput from "@/components/PlacesAddressInput";
 
 /**
  * AuthPage.jsx
@@ -69,6 +71,7 @@ export default function AuthPage() {
   const [lname, setLname] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState(""); // keep as JSON string; integrate Places later
+  const [addressObj, setAddressObj] = useState(null);
 
   const loggedIn = pb.authStore.isValid && !!pb.authStore.model;
   const displayName = useMemo(() => {
@@ -121,13 +124,6 @@ export default function AuthPage() {
     setSuccessMsg("");
     setLoading(true);
     try {
-      let addressJson = null;
-      if (address?.trim()) {
-        try {
-          addressJson = JSON.parse(address);
-        } catch {}
-      }
-
       await pb.collection("ws_users").create({
         email: email.trim(),
         password,
@@ -135,7 +131,7 @@ export default function AuthPage() {
         fname: fname.trim(),
         lname: lname.trim(),
         phone: phone.trim(),
-        address: addressJson,
+        address: addressObj, // store the JSON directly,
       });
 
       const auth = await pb
@@ -330,18 +326,15 @@ export default function AuthPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700">
-                  Address JSON (from Google Places)
+                  Address
                 </label>
-                <textarea
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  rows={4}
-                  placeholder='{"place_id":"...","formatted_address":"..."}'
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400 font-mono text-xs"
+                <PlacesAddressInput
+                  value={addressObj}
+                  onChange={setAddressObj}
+                  restrictCountry="us"
                 />
                 <p className="mt-1 text-xs text-slate-500">
-                  (You can wire Google Places autocomplete later; for now you
-                  can paste JSON.)
+                  Powered by Google Places.
                 </p>
               </div>
               <button

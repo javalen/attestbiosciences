@@ -1,5 +1,5 @@
 {
-  "name": "dentalclinic",
+  "name": "attestbiosciences",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -13,6 +13,7 @@
     "deploy": "gh-pages -d dist"
   },
   "dependencies": {
+    "@googlemaps/js-api-loader": "^1.16.10",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-select": "^2.2.5",
     "@radix-ui/react-slot": "^1.2.3",

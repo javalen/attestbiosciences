@@ -180,7 +180,7 @@ const Header = () => {
               to="/book"
               className="bg-sky-600 text-white px-4 py-2 rounded-xl hover:bg-sky-700 transition text-sm"
             >
-              You have questions?
+              Questions?
             </Link>
           </div>
 
