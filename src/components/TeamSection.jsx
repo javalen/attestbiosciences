@@ -61,7 +61,7 @@ import board from "../assets/board.png";
 const demoTeam = [
   {
     id: 1,
-    name: "Dr. Maya SantosRion Barnes, Esq.",
+    name: "Rion Barnes, Esq.",
     role: "CEO & General Counsel",
     bio: "Rion Barnes, Esq. is the CEO and General Counsel of Attest BioSciences, bringing a strategic vision and strong legal acumen to the company. With a background working in the legal departments of Fortune 500 and 100 companies, including Morgan Stanley and Univar Solutions, Rion has extensive experience navigating complex legal and corporate matters. As a co-founder, Rion has been instrumental in shaping the company's direction and growth, leveraging their expertise in corporate governance and a commitment to health innovation. Dedicated to making cancer screening more accessible and affordable, Rion leads Attest BioSciences with a focus on strategic growth and impactful legal oversight.",
     image: rion,

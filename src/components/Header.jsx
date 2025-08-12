@@ -174,7 +174,7 @@ const Header = () => {
 
         {/* Right side: CTA + Auth */}
         <div className="hidden md:flex items-center gap-4 shrink-0 whitespace-nowrap">
-          <div className="hidden lg:flex items-center space-x-2 pr-2 border-r border-slate-200">
+          {/* <div className="hidden lg:flex items-center space-x-2 pr-2 border-r border-slate-200">
             <PhoneCall className="text-sky-600" />
             <Link
               to="/book"
@@ -182,7 +182,7 @@ const Header = () => {
             >
               Questions?
             </Link>
-          </div>
+          </div> */}
 
           {/* Auth-aware area */}
           {loggedIn ? (
