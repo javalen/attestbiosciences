@@ -1,5 +1,6 @@
 import { CalendarCheck } from "lucide-react";
 import bg from "../assets/home-testing.png"; // <-- your saved image
+import { NavLink, Link, useNavigate, useLocation } from "react-router-dom";
 
 const Hero = () => {
   return (
@@ -26,13 +27,21 @@ const Hero = () => {
           <p className="text-slate-700 text-base lg:text-lg">
             Empowering Health, One Test at a Time.
           </p>
-          <a
-            href="#book"
+          <NavLink
+            key={"test"}
+            to="tests"
             className="inline-flex items-center bg-sky-600 text-white px-5 py-3 rounded-xl hover:bg-sky-700 transition text-base font-medium shadow"
           >
             <CalendarCheck className="w-5 h-5 mr-2" />
             Order Test
-          </a>
+          </NavLink>
+          {/* <a
+            href="/tests"
+            className="inline-flex items-center bg-sky-600 text-white px-5 py-3 rounded-xl hover:bg-sky-700 transition text-base font-medium shadow"
+          >
+            <CalendarCheck className="w-5 h-5 mr-2" />
+            Order Test
+          </a> */}
         </div>
       </div>
     </section>

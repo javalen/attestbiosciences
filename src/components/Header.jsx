@@ -17,8 +17,9 @@ import AttestLogo from "@/assets/attest-logo.png";
 
 const navLinks = [
   { to: "/", label: "Home" },
-  { to: "/services", label: "Services" },
   { to: "/about", label: "About" },
+  { to: "/services", label: "Services" },
+
   { to: "/tips", label: "Benefits" },
   { to: "/testimonials", label: "Testimonials" },
   { to: "/tests", label: "Our Tests" },

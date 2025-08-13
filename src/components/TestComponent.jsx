@@ -39,11 +39,34 @@ const getCatName = (rec) => getCat(rec)?.name || "Uncategorized";
 
 const isAvailable = (rec) => rec?.available !== false; // default to available if field missing
 
+async function fetchAllCategories() {
+  // Try common names: `category` then `categories`
+  try {
+    return await pb.collection("test_category").getFullList({ sort: "+name" });
+  } catch (e1) {
+    console.log("Error", e1);
+  }
+}
+
+// Get a category id from a test record (supports single or M2M)
+function getCatIdFromTest(t, key = "cat_id") {
+  // raw id(s)
+  const raw = t?.[key];
+  if (Array.isArray(raw)) return raw[0] || null;
+  if (typeof raw === "string" && raw) return raw;
+
+  // or from expand
+  const exp = t?.expand?.[key];
+  if (Array.isArray(exp)) return exp[0]?.id || null;
+  return exp?.id || null;
+}
+
 /**
  * List page grouped by Category (relation `cat_id`)
  */
 export function TestsIndex() {
   const [tests, setTests] = useState([]);
+  const [categories, setCategories] = useState([]); // all cats from PB
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
@@ -53,14 +76,23 @@ export function TestsIndex() {
     (async () => {
       try {
         setLoading(true);
-        // Pull tests with expanded category relation
-        const res = await pb.collection("test").getList(1, 500, {
-          sort: "+name",
-          expand: "cat_id",
-        });
-        if (!cancelled) setTests(res?.items ?? []);
+        setError("");
+
+        // fetch in parallel
+        const [cats, testsRes] = await Promise.all([
+          fetchAllCategories(),
+          pb.collection("test").getList(1, 500, {
+            sort: "+name",
+            expand: "cat_id",
+          }),
+        ]);
+
+        if (cancelled) return;
+        setCategories(cats || []);
+        setTests(testsRes?.items ?? []);
       } catch (e) {
-        if (!cancelled) setError(e?.message || "Failed to load tests");
+        if (!cancelled)
+          setError(e?.message || "Failed to load categories/tests");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -70,7 +102,8 @@ export function TestsIndex() {
     };
   }, []);
 
-  const filtered = useMemo(() => {
+  // Filter tests by search
+  const filteredTests = useMemo(() => {
     if (!q) return tests;
     const term = q.toLowerCase();
     return tests.filter((t) =>
@@ -80,23 +113,19 @@ export function TestsIndex() {
     );
   }, [q, tests]);
 
-  const grouped = useMemo(() => {
-    const byId = new Map();
-    for (const t of filtered) {
-      const cat = getCat(t);
-      const key = cat?.id || "__uncat";
-      if (!byId.has(key))
-        byId.set(key, {
-          id: key,
-          name: cat?.name || "Uncategorized",
-          items: [],
-        });
-      byId.get(key).items.push(t);
+  // Map tests by category id (including null → uncategorized)
+  const testsByCat = useMemo(() => {
+    const m = new Map();
+    for (const t of filteredTests) {
+      const cid = getCatIdFromTest(t) || "__uncat";
+      if (!m.has(cid)) m.set(cid, []);
+      m.get(cid).push(t);
     }
-    return Array.from(byId.values()).sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
-  }, [filtered]);
+    return m;
+  }, [filteredTests]);
+
+  // Do we have any uncategorized tests?
+  const uncategorized = testsByCat.get("__uncat") || [];
 
   if (loading) {
     return (
@@ -104,7 +133,7 @@ export function TestsIndex() {
         <div className="container mx-auto px-4 lg:px-8 py-16">
           <div className="flex items-center gap-3 text-sky-700">
             <FlaskConical className="w-6 h-6 animate-pulse" />
-            <p className="text-lg">Loading available tests…</p>
+            <p className="text-lg">Loading categories & tests…</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-8">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -126,7 +155,7 @@ export function TestsIndex() {
           <div className="flex items-start gap-3 text-red-700">
             <Info className="w-6 h-6" />
             <div>
-              <h2 className="text-xl font-semibold">Couldn’t load tests</h2>
+              <h2 className="text-xl font-semibold">Couldn’t load data</h2>
               <p className="text-sm opacity-80">{error}</p>
             </div>
           </div>
@@ -142,10 +171,10 @@ export function TestsIndex() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-sky-900">
-              Tests
+              Tests by Category
             </h1>
             <p className="text-slate-600">
-              Browse our catalog by category. Tap any card for details.
+              Expand a category to view its tests.
             </p>
           </div>
           <div className="w-full sm:w-80">
@@ -158,31 +187,72 @@ export function TestsIndex() {
           </div>
         </div>
 
-        {/* Grouped by Category */}
-        {grouped.length === 0 ? (
-          <div className="mt-12 text-slate-600">
-            No tests match your search.
-          </div>
-        ) : (
-          <div className="mt-8 space-y-10">
-            {grouped.map((group) => (
-              <section
-                key={group.id}
-                id={`cat-${group.id}`}
-                className="scroll-mt-24"
+        {/* Categories accordions */}
+        <div className="mt-8 space-y-4">
+          {categories.map((cat) => {
+            const catTests = testsByCat.get(cat.id) || [];
+            const noneMsg = q
+              ? "No tests match your search in this category."
+              : "No tests are available in this category yet.";
+            return (
+              <details
+                key={cat.id}
+                className="group border border-slate-200 rounded-xl bg-white shadow-sm"
               >
-                <h2 className="text-xl font-bold text-slate-900 mb-4">
-                  {group.name}
-                </h2>
+                <summary className="flex items-center justify-between gap-3 cursor-pointer select-none px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-base sm:text-lg font-semibold text-slate-900">
+                      {cat.name}
+                    </span>
+                    <span className="text-xs sm:text-sm px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                      {catTests.length}{" "}
+                      {catTests.length === 1 ? "test" : "tests"}
+                    </span>
+                  </div>
+                  <ChevronDown className="w-5 h-5 text-slate-500 transition-transform group-open:rotate-180" />
+                </summary>
+
+                <div className="px-4 pb-4">
+                  {catTests.length === 0 ? (
+                    <div className="text-slate-600">{noneMsg}</div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {catTests.map((t) => (
+                        <TestCard key={t.id} test={t} showCategory={false} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+            );
+          })}
+
+          {/* Optional: show uncategorized if any tests are missing a category */}
+          {uncategorized.length > 0 && (
+            <details className="group border border-slate-200 rounded-xl bg-white shadow-sm">
+              <summary className="flex items-center justify-between gap-3 cursor-pointer select-none px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-base sm:text-lg font-semibold text-slate-900">
+                    Uncategorized
+                  </span>
+                  <span className="text-xs sm:text-sm px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                    {uncategorized.length}{" "}
+                    {uncategorized.length === 1 ? "test" : "tests"}
+                  </span>
+                </div>
+                <ChevronDown className="w-5 h-5 text-slate-500 transition-transform group-open:rotate-180" />
+              </summary>
+
+              <div className="px-4 pb-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {group.items.map((t) => (
+                  {uncategorized.map((t) => (
                     <TestCard key={t.id} test={t} showCategory={false} />
                   ))}
                 </div>
-              </section>
-            ))}
-          </div>
-        )}
+              </div>
+            </details>
+          )}
+        </div>
       </div>
     </section>
   );
