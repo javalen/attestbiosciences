@@ -148,16 +148,21 @@ const Header = () => {
         <Link to="/" className="flex items-center gap-3 shrink-0">
           <img
             src={AttestLogo}
-            alt="Attest BioSciences logo"
-            className="h-12 md:h-14 w-auto object-contain" // was h-9
+            alt="Attest BioSciences"
+            className="h-12 md:h-14 w-auto object-contain"
           />
-          <span className="text-2xl md:text-3xl font-bold text-sky-600 whitespace-nowrap">
+          {/* Hide the text label until extra-large screens */}
+          <span className="hidden lg:inline xl:hidden text-xl font-bold text-sky-600 whitespace-nowrap">
+            Attest
+          </span>
+          {/* full label on large+ screens */}
+          <span className="hidden xl:inline text-2xl 2xl:text-3xl font-bold text-sky-600 whitespace-nowrap">
             Attest BioSciences
           </span>
         </Link>
 
         {/* Desktop Navigation */}
-        <nav className="hidden md:flex flex-1 justify-center gap-6 text-gray-700 font-medium min-w-0 whitespace-nowrap">
+        <nav className="hidden lg:flex flex-1 justify-center gap-6 text-gray-700 font-medium min-w-0 whitespace-nowrap overflow-x-auto">
           {navLinks.map((link) => (
             <NavLink
               key={link.to}
@@ -219,7 +224,7 @@ const Header = () => {
                   className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50"
                 >
                   <User className="w-5 h-5 text-slate-700" />
-                  <span className="text-sm font-medium text-slate-800">
+                  <span className="hidden xl:inline text-sm font-medium text-slate-800">
                     {displayName}
                   </span>
                   <ChevronDown className="w-4 h-4 text-slate-600" />
@@ -277,7 +282,7 @@ const Header = () => {
         </div>
 
         {/* Mobile Menu Icon */}
-        <div className="md:hidden">
+        <div className="lg:hidden">
           <button
             aria-label="Toggle menu"
             onClick={() => setIsMenuOpen((s) => !s)}
@@ -293,7 +298,7 @@ const Header = () => {
 
       {/* Mobile Dropdown Menu */}
       {isMenuOpen && (
-        <div className="md:hidden bg-white border-t border-gray-200 shadow-md px-4 py-4 space-y-3 text-gray-700 font-medium">
+        <div className="lg:hidden bg-white border-t border-gray-200 shadow-md px-4 py-4 space-y-3 text-gray-700 font-medium">
           {navLinks.map((link) => (
             <NavLink
               key={link.to}

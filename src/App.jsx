@@ -12,6 +12,7 @@ import { TestsIndex } from "./components/TestComponent";
 import { TestDetail } from "./components/TestComponent";
 import AuthPage from "./components/AuthPage";
 import TestimonialNew from "./components/TestimonialNew";
+import AdvisoryTeam from "./components/AdvisoryTeam";
 
 const App = () => {
   return (

@@ -33,7 +33,6 @@ import antionette from "../assets/dr_an.jpg";
 import marcus from "../assets/marcus.png";
 import alexis from "../assets/alexis.png";
 import board from "../assets/board.png";
-import AdvisoryTeam from "./AdvisoryTeam";
 
 /*
   TeamSection — Modern, filterable team grid
@@ -60,45 +59,6 @@ import AdvisoryTeam from "./AdvisoryTeam";
 */
 
 const demoTeam = [
-  {
-    id: 1,
-    name: "Rion Barnes, Esq.",
-    role: "CEO & General Counsel",
-    bio: "Rion Barnes, Esq. is the CEO and General Counsel of Attest BioSciences, bringing a strategic vision and strong legal acumen to the company. With a background working in the legal departments of Fortune 500 and 100 companies, including Morgan Stanley and Univar Solutions, Rion has extensive experience navigating complex legal and corporate matters. As a co-founder, Rion has been instrumental in shaping the company's direction and growth, leveraging their expertise in corporate governance and a commitment to health innovation. Dedicated to making cancer screening more accessible and affordable, Rion leads Attest BioSciences with a focus on strategic growth and impactful legal oversight.",
-    image: rion,
-    tags: ["Legal", "Partnerships", "R&D"],
-    socials: {
-      linkedin: "https://www.linkedin.com/",
-      twitter: "https://twitter.com/",
-      website: "https://example.com",
-      email: "maya@example.com",
-    },
-  },
-  {
-    id: 2,
-    name: "Marcus Hall",
-    role: "Chief of Sales and Marketing",
-    bio: "Marcus Hall is the Chief of Sales and Marketing at Attest BioSciences, where he leads the company's sales strategies and brand outreach. Marcus brings a wealth of experience from his previous executive roles in sales and marketing at Fortune 500 companies, including Coca-Cola and Caterpillar. His background in working with industry giants has equipped him with a deep understanding of market dynamics and consumer engagement. Marcus is dedicated to driving Attest BioSciences' market presence and fostering strong customer relationships, leveraging his expertise to position the company as a leader in at-home cancer screening.",
-    image: marcus,
-    tags: ["Genomics", "Pipelines", "ML"],
-    socials: {
-      linkedin: "https://www.linkedin.com/",
-      website: "https://example.com",
-      email: "jordan@example.com",
-    },
-  },
-  {
-    id: 3,
-    name: "Dr. Antoinette Gaston",
-    role: "COO & Chief Scientific Officer",
-    bio: "Dr. Antoinette Gaston is the COO and Chief Scientific Officer of Attest BioSciences and a co-founder of the company. She holds a Ph.D. in Molecular Biology and an MBA, combining scientific expertise with strong business acumen. With years of experience in clinical laboratory operations, cancer research, and assay development, Dr. Gaston plays a critical role in the scientific advancement of the company. She is passionate about advancing healthcare through innovative solutions and works tirelessly to ensure that Attest BioSciences delivers high-quality, reliable cancer screening tests. Her leadership and scientific expertise are vital to the company's mission of empowering proactive health management and making proactive health management accessible to all.",
-    image: antionette,
-    tags: ["CLIA", "Quality", "Validation"],
-    socials: {
-      linkedin: "https://www.linkedin.com/",
-      email: "amina@example.com",
-    },
-  },
   {
     id: 4,
     name: "Advisory Board",
@@ -251,7 +211,7 @@ function MemberCard({ m, onMemberClick }) {
   );
 }
 
-export default function TeamSection({
+export default function AdvisoryTeam({
   team = demoTeam,
   title = "Meet the Team",
   onMemberClick,
@@ -299,12 +259,10 @@ export default function TeamSection({
           <div className="flex items-center gap-2">
             <Users className="h-5 w-5 text-primary" />
             <h2 className="text-xl font-semibold tracking-tight">
-              Executive Team
+              Advisory Board
             </h2>
           </div>
         </div>
-
-        {/* Controls */}
       </div>
 
       {/* Grid */}
@@ -325,7 +283,6 @@ export default function TeamSection({
           No team members match your search.
         </div>
       )}
-      <AdvisoryTeam />
     </section>
   );
 }
