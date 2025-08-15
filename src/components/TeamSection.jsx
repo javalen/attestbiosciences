@@ -99,18 +99,6 @@ const demoTeam = [
       email: "amina@example.com",
     },
   },
-  {
-    id: 4,
-    name: "Advisory Board",
-    role: "Advisory Board",
-    bio: "Attest BioSciences is supported by a distinguished advisory board composed of experts with extensive experience in healthcare, technology, and business. Our board includes former C-suite executives from Fortune 100 companies, successful entrepreneurs with notable startup exits, and leading professionals from the healthcare industry. This diverse and accomplished group provides strategic guidance, industry insights, and valuable connections, helping to drive innovation and ensure the success of Attest BioSciences as we advance our mission to make cancer screening more accessible and effective.",
-    image: board,
-    tags: ["UX", "Accessibility", "Design Systems"],
-    socials: {
-      twitter: "https://twitter.com/",
-      website: "https://example.com",
-    },
-  },
 ];
 
 function initials(name = "") {
