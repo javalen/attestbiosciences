@@ -82,8 +82,9 @@ export function TestsIndex() {
         const [cats, testsRes] = await Promise.all([
           fetchAllCategories(),
           pb.collection("test").getList(1, 500, {
+            filter: "top_level_test=true",
             sort: "+name",
-            expand: "cat_id",
+            expand: "cat_id, included_test",
           }),
         ]);
 
