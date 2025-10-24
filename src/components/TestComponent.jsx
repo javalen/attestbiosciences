@@ -8,6 +8,7 @@ import {
   Info,
   ChevronDown,
   Loader2,
+  XCircle,
 } from "lucide-react";
 import pb from "@/db/pocketbase";
 
@@ -40,7 +41,6 @@ const getCatName = (rec) => getCat(rec)?.name || "Uncategorized";
 const isAvailable = (rec) => rec?.available !== false; // default to available if field missing
 
 async function fetchAllCategories() {
-  // Try common names: `category` then `categories`
   try {
     return await pb.collection("test_category").getFullList({ sort: "+name" });
   } catch (e1) {
@@ -50,12 +50,10 @@ async function fetchAllCategories() {
 
 // Get a category id from a test record (supports single or M2M)
 function getCatIdFromTest(t, key = "cat_id") {
-  // raw id(s)
   const raw = t?.[key];
   if (Array.isArray(raw)) return raw[0] || null;
   if (typeof raw === "string" && raw) return raw;
 
-  // or from expand
   const exp = t?.expand?.[key];
   if (Array.isArray(exp)) return exp[0]?.id || null;
   return exp?.id || null;
@@ -78,7 +76,6 @@ export function TestsIndex() {
         setLoading(true);
         setError("");
 
-        // fetch in parallel
         const [cats, testsRes] = await Promise.all([
           fetchAllCategories(),
           pb.collection("test").getList(1, 500, {
@@ -88,6 +85,7 @@ export function TestsIndex() {
           }),
         ]);
 
+        console.log("Test", testsRes);
         if (cancelled) return;
         setCategories(cats || []);
         setTests(testsRes?.items ?? []);
@@ -125,7 +123,6 @@ export function TestsIndex() {
     return m;
   }, [filteredTests]);
 
-  // Do we have any uncategorized tests?
   const uncategorized = testsByCat.get("__uncat") || [];
 
   if (loading) {
@@ -178,13 +175,26 @@ export function TestsIndex() {
               Expand a category to view its tests.
             </p>
           </div>
-          <div className="w-full sm:w-80">
+
+          {/* Search with clear (red X) */}
+          <div className="w-full sm:w-80 relative">
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search tests or categories…"
-              className="w-full rounded-xl border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-400"
+              className="w-full rounded-xl border border-slate-300 pl-4 pr-10 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-400"
             />
+            {q?.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setQ("")}
+                aria-label="Clear search"
+                className="absolute inset-y-0 right-0 pr-2 flex items-center"
+                title="Clear"
+              >
+                <XCircle className="w-5 h-5 text-red-500 hover:text-red-600" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -228,7 +238,6 @@ export function TestsIndex() {
             );
           })}
 
-          {/* Optional: show uncategorized if any tests are missing a category */}
           {uncategorized.length > 0 && (
             <details className="group border border-slate-200 rounded-xl bg-white shadow-sm">
               <summary className="flex items-center justify-between gap-3 cursor-pointer select-none px-4 py-3">
@@ -343,13 +352,11 @@ function InfoAccordionSection({ title, text }) {
 }
 
 async function getOrCreateOpenCart(userId) {
-  // Try to find an open cart for this user
   try {
     return await pb
       .collection("cart")
       .getFirstListItem(`user = "${userId}" && status = "open"`);
   } catch (err) {
-    // If none exists, create one
     if (err?.status === 404 || /not found/i.test(err?.message || "")) {
       return await pb.collection("cart").create({
         user: userId,
@@ -370,7 +377,6 @@ async function addTestToCart(userId, testId) {
     : [];
 
   if (current.includes(testId)) {
-    // already in cart; no-op
     return { cartId: cart.id, already: true };
   }
 
@@ -383,7 +389,7 @@ async function addTestToCart(userId, testId) {
 }
 
 /**
- * Detail page: shows a single test by ID with expanded category
+ * Detail page: shows a single test by ID with expanded category + included tests
  */
 export function TestDetail() {
   const { id } = useParams();
@@ -399,7 +405,6 @@ export function TestDetail() {
     setAddMsg("");
     setAddErr("");
     if (!pb.authStore.isValid || !pb.authStore.model) {
-      // send them to login and come back here after
       return navigate("/login", { state: { redirectTo: `/tests/${id}` } });
     }
     try {
@@ -418,9 +423,9 @@ export function TestDetail() {
     (async () => {
       try {
         setLoading(true);
-        const rec = await pb
-          .collection("test")
-          .getOne(id, { expand: "cat_id" });
+        const rec = await pb.collection("test").getOne(id, {
+          expand: "cat_id, included_test",
+        });
         if (!cancelled) setItem(rec);
       } catch (e) {
         if (!cancelled) setError(e?.message || "Not found");
@@ -464,6 +469,9 @@ export function TestDetail() {
 
   const catName = getCatName(item);
   const available = isAvailable(item);
+  const includedTests = Array.isArray(item?.expand?.included_test)
+    ? item.expand.included_test
+    : [];
 
   return (
     <section className="min-h-[60vh] bg-white">
@@ -510,22 +518,75 @@ export function TestDetail() {
             </p>
 
             <div className="mt-6 grid gap-3">
-              {hasText(item.more_info) && (
-                <InfoAccordionSection title="More info" text={item.more_info} />
+              {hasText(item.description_long) && (
+                <InfoAccordionSection
+                  title="More info..."
+                  text={item.description_long}
+                />
               )}
               {hasText(item.measured) && (
                 <InfoAccordionSection
-                  title="What's measured"
+                  title="What's measured?"
                   text={item.measured}
                 />
               )}
-              {hasText(item.who_should) && (
+              {hasText(item.who) && (
                 <InfoAccordionSection
-                  title="Who should take this test"
-                  text={item.who_should}
+                  title="Who should take this test?"
+                  text={item.who}
+                />
+              )}
+              {hasText(item.frequency) && (
+                <InfoAccordionSection
+                  title="How often should I take this test?"
+                  text={item.frequency}
                 />
               )}
             </div>
+
+            {/* Included/child tests */}
+            {includedTests.length > 0 && (
+              <div className="mt-8">
+                <h2 className="text-xl font-semibold text-slate-900">
+                  Included tests
+                </h2>
+                <p className="text-slate-600 mt-1">
+                  These tests are bundled within{" "}
+                  <span className="font-medium">{item.name}</span>.
+                </p>
+
+                <div className="mt-4 grid gap-4">
+                  {includedTests.map((child) => (
+                    <div
+                      key={child.id}
+                      className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 rounded-lg bg-sky-50 text-sky-700">
+                          <FlaskConical className="w-4 h-4" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-slate-900">
+                          {child.name}
+                        </h3>
+                      </div>
+
+                      <p className="mt-3 text-slate-700 whitespace-pre-wrap">
+                        {child.description || "No description provided."}
+                      </p>
+
+                      {hasText(child.description_long) && (
+                        <div className="mt-3">
+                          <InfoAccordionSection
+                            title="More info..."
+                            text={child.description_long}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <aside className="p-6 rounded-2xl border border-slate-200 bg-white shadow-sm h-max">
@@ -541,7 +602,6 @@ export function TestDetail() {
             {addMsg && (
               <div className="mt-3 text-sm text-emerald-700">{addMsg}</div>
             )}
-
             {addErr && (
               <div className="mt-3 text-sm text-red-700">{addErr}</div>
             )}
