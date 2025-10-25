@@ -41,6 +41,7 @@ const Testimonials = () => {
         // Pull up to 50; sort newest first (adjust to your preference)
         const res = await pb.collection("testimonial").getList(1, 50, {
           sort: "-created",
+          filter: "show=true",
           // If you add a published flag, enable a filter like:
           // filter: 'published = true'
         });

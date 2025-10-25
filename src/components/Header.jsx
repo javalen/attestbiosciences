@@ -257,7 +257,15 @@ const Header = () => {
                     >
                       Contact us
                     </Link>
-
+                    {user.isAdmin && (
+                      <Link
+                        to="/admin"
+                        className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-800"
+                        onClick={() => setIsUserMenuOpen(false)}
+                      >
+                        Admin Panel
+                      </Link>
+                    )}
                     <div className="my-1 border-t border-slate-200" />
 
                     <button
