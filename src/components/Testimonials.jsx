@@ -4,6 +4,7 @@ import {
   FaChevronLeft,
   FaChevronRight,
   FaStar,
+  FaQuoteRight,
 } from "react-icons/fa";
 import pb from "@/db/pocketbase";
 import { Link, useNavigate } from "react-router-dom";
@@ -141,11 +142,17 @@ const Testimonials = () => {
                     </div>
 
                     <div className="md:w-2/3 md:pl-12">
-                      <div className="relative">
-                        <FaQuoteLeft className="text-sky-200 text-2xl md:text-3xl absolute -top-2 -left-7 md:-left-10" />
-                        <p className="text-lg text-gray-700 mb-6 relative z-10">
+                      <div className="relative px-6 md:px-10">
+                        {/* Opening Quote */}
+                        <FaQuoteLeft className="text-sky-200 text-2xl md:text-3xl absolute -top-3 left-0" />
+
+                        {/* Testimonial Text */}
+                        <p className="text-lg text-gray-700 mb-6 relative z-10 text-justify">
                           {testimonial.content}
                         </p>
+
+                        {/* Closing Quote */}
+                        <FaQuoteRight className="text-sky-200 text-2xl md:text-3xl absolute -bottom-3 right-0" />
                       </div>
 
                       <div className="flex items-center justify-between">
