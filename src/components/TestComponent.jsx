@@ -306,7 +306,7 @@ function TestCard({ test, showCategory = true }) {
             )}
             {!available && (
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                Unavailable
+                Coming Soon
               </span>
             )}
           </div>
@@ -500,7 +500,7 @@ export function TestDetail() {
                 </span>
                 {!available && (
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                    Unavailable
+                    Coming Soon
                   </span>
                 )}
               </div>
