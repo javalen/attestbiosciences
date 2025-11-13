@@ -1,4 +1,3 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import About from "./components/About";
 import BookAppointment from "./components/BookAppointment";
 import Footer from "./components/Footer";
@@ -14,25 +13,20 @@ import AuthPage from "./components/AuthPage";
 import TestimonialNew from "./components/TestimonialNew";
 import AdvisoryTeam from "./components/AdvisoryTeam";
 import AdminPanel from "./components/AdminPanel";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
 
 const App = () => {
   return (
-    <Router>
+    <Router basename="/attestbiosciences">
       <Header />
 
       <Routes>
-        <Route
-          path="/"
-          element={
-            <>
-              <Hero />
-              {/* <Services />
-              <Tips />
-              <Testimonials />
-              <TeamSection /> */}
-            </>
-          }
-        />
+        <Route path="/" element={<Hero />} />
         <Route path="/about" element={<About />} />
         <Route path="/book" element={<BookAppointment />} />
         <Route path="/services" element={<Services />} />
@@ -44,6 +38,8 @@ const App = () => {
         <Route path="/login" element={<AuthPage />} />
         <Route path="/testimonials/new" element={<TestimonialNew />} />
         <Route path="/admin" element={<AdminPanel />} />
+        {/* Fallback to home */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
       <Footer />
