@@ -79,13 +79,13 @@ export function TestsIndex() {
         const [cats, testsRes] = await Promise.all([
           fetchAllCategories(),
           pb.collection("test").getList(1, 500, {
-            filter: "top_level_test=true",
+            // ✅ only top-level tests that should be shown
+            filter: "top_level_test = true && show = true",
             sort: "+name",
             expand: "cat_id, included_test",
           }),
         ]);
 
-        console.log("Test", testsRes);
         if (cancelled) return;
         setCategories(cats || []);
         setTests(testsRes?.items ?? []);
@@ -101,7 +101,7 @@ export function TestsIndex() {
     };
   }, []);
 
-  // Filter tests by search
+  // Filter tests by search (the list is already limited to show=true on the server)
   const filteredTests = useMemo(() => {
     if (!q) return tests;
     const term = q.toLowerCase();
@@ -122,6 +122,13 @@ export function TestsIndex() {
     }
     return m;
   }, [filteredTests]);
+
+  // ✅ Only show categories that actually have tests after all filters
+  const visibleCategories = useMemo(() => {
+    return (categories || []).filter(
+      (cat) => (testsByCat.get(cat.id) || []).length > 0
+    );
+  }, [categories, testsByCat]);
 
   const uncategorized = testsByCat.get("__uncat") || [];
 
@@ -200,7 +207,7 @@ export function TestsIndex() {
 
         {/* Categories accordions */}
         <div className="mt-8 space-y-4">
-          {categories.map((cat) => {
+          {visibleCategories.map((cat) => {
             const catTests = testsByCat.get(cat.id) || [];
             const noneMsg = q
               ? "No tests match your search in this category."
@@ -238,6 +245,7 @@ export function TestsIndex() {
             );
           })}
 
+          {/* Only render Uncategorized if it actually has visible tests */}
           {uncategorized.length > 0 && (
             <details className="group border border-slate-200 rounded-xl bg-white shadow-sm">
               <summary className="flex items-center justify-between gap-3 cursor-pointer select-none px-4 py-3">
@@ -426,7 +434,13 @@ export function TestDetail() {
         const rec = await pb.collection("test").getOne(id, {
           expand: "cat_id, included_test",
         });
-        if (!cancelled) setItem(rec);
+        // ✅ Block access to hidden tests
+        if (!cancelled) {
+          if (rec?.show !== true) {
+            throw new Error("Test not found");
+          }
+          setItem(rec);
+        }
       } catch (e) {
         if (!cancelled) setError(e?.message || "Not found");
       } finally {

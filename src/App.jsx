@@ -26,10 +26,10 @@ const App = () => {
           element={
             <>
               <Hero />
-              <Services />
+              {/* <Services />
               <Tips />
               <Testimonials />
-              <TeamSection />
+              <TeamSection /> */}
             </>
           }
         />

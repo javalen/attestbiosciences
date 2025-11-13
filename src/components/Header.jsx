@@ -1,3 +1,4 @@
+// Header.jsx
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Link, useNavigate, useLocation } from "react-router-dom";
 import {
@@ -11,26 +12,76 @@ import {
   Loader2,
   Trash2,
 } from "lucide-react";
-// import PocketBase from "pocketbase"; // ❌ not needed
 import pb from "@/db/pocketbase";
 import AttestLogo from "@/assets/attest-logo.png";
 
-const navLinks = [
-  { to: "/", label: "Home" },
-  { to: "/about", label: "About" },
-  { to: "/services", label: "Services" },
+/* -------------------------- NAV PAGES (PocketBase) -------------------------- */
+function useNavPages() {
+  const [links, setLinks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const subRef = useRef(null);
 
-  { to: "/tips", label: "Benefits" },
-  { to: "/testimonials", label: "Testimonials" },
-  { to: "/tests", label: "Our Tests" },
-  { to: "/team", label: "Our Team" },
-  { to: "/book", label: "Contact Us" },
-];
+  useEffect(() => {
+    let cancelled = false;
 
+    async function load() {
+      setErr("");
+      setLoading(true);
+      try {
+        // Assumes server-side List Rule handles: published, show_in_nav, time window, roles
+        const list = await pb.collection("pages").getList(1, 200, {
+          sort: "order,label",
+          filter: "published=true && show_in_nav=true",
+        });
+        console.log("List", list);
+        if (!cancelled) setLinks(list?.items || []);
+      } catch (e) {
+        if (!cancelled) setErr(e?.message || "Failed to load nav links.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+
+    // Live-update on any create/update/delete
+    (async () => {
+      try {
+        if (subRef.current) await pb.collection("pages").unsubscribe("*");
+        await pb.collection("pages").subscribe("*", async () => {
+          try {
+            const list = await pb.collection("pages").getList(1, 200, {
+              sort: "order,label",
+              filter: "published=true && show_in_nav=true",
+            });
+            if (!cancelled) setLinks(list?.items || []);
+          } catch {}
+        });
+        subRef.current = "*";
+      } catch {
+        // ignore subscription errors
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      (async () => {
+        try {
+          if (subRef.current) await pb.collection("pages").unsubscribe("*");
+        } catch {}
+        subRef.current = null;
+      })();
+    };
+  }, []);
+
+  return { links, loading, err };
+}
+
+/* -------------------------- Shared helpers (cart) --------------------------- */
 const baseLink = "transition hover:text-sky-600";
 const activeLink = "text-sky-600";
 
-/* --- helpers shared by Header + CartDrawer --- */
 function countTestsInCart(cart) {
   const t = cart?.test;
   const te = cart?.expand?.test;
@@ -54,27 +105,30 @@ async function findOpenCart(userId, expand = false) {
   }
 }
 
+/* --------------------------------- Header ---------------------------------- */
 const Header = () => {
-  const [isMenuOpen, setIsMenuOpen] = useState(false); // mobile nav
-  const [user, setUser] = useState(pb.authStore.model); // PocketBase user model or null
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [user, setUser] = useState(pb.authStore.model);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const userMenuRef = useRef(null); // ✅ correct ref for plain JS
+  const userMenuRef = useRef(null);
   const navigate = useNavigate();
 
   const loggedIn = pb.authStore.isValid && !!user;
   const displayName = user?.name || user?.username || user?.email || "Account";
+
   const [cartOpen, setCartOpen] = useState(false);
   const [cartCount, setCartCount] = useState(0);
   const [cartId, setCartId] = useState(null);
   const subRef = useRef(null);
   const location = useLocation();
 
-  // when auth changes, load cart + subscribe
+  const { links: navLinks, loading: navLoading } = useNavPages();
+
+  // Auth changes → load cart & subscribe to updates for that cart
   useEffect(() => {
     let cancelled = false;
 
     async function setup() {
-      // clear existing sub
       if (subRef.current && cartId) {
         try {
           await pb.collection("cart").unsubscribe(cartId);
@@ -95,7 +149,6 @@ const Header = () => {
       if (cart) {
         setCartId(cart.id);
         setCartCount(countTestsInCart(cart));
-        // subscribe to this cart for live count updates
         await pb.collection("cart").subscribe(cart.id, (e) => {
           setCartCount(countTestsInCart(e.record));
         });
@@ -107,24 +160,22 @@ const Header = () => {
     }
 
     setup();
-
     return () => {
       cancelled = true;
     };
-  }, [pb.authStore.isValid, pb.authStore.model?.id]);
+  }, [pb.authStore.isValid, pb.authStore.model?.id]); // eslint-disable-line
 
-  // keep user state in sync with PB auth changes
+  // Keep user state in sync with PB auth changes
   useEffect(() => {
     const unsub = pb.authStore.onChange(() => {
       setUser(pb.authStore.model);
     });
     return () => {
-      // some PB versions return an unsubscribe fn; if not, this is a no-op
       if (typeof unsub === "function") unsub();
     };
   }, []);
 
-  // close user menu on outside click
+  // Close user menu on outside click
   useEffect(() => {
     function onDocClick(e) {
       if (!isUserMenuOpen) return;
@@ -145,18 +196,16 @@ const Header = () => {
   return (
     <header className="scroll-mt-20 bg-white shadow-md sticky top-0 z-50">
       <div className="w-full flex items-center justify-between gap-4 py-4 px-4 lg:px-8">
-        {/* Logo -> link to home */}
+        {/* Logo */}
         <Link to="/" className="flex items-center gap-3 shrink-0">
           <img
             src={AttestLogo}
             alt="Attest BioSciences"
             className="h-12 md:h-14 w-auto object-contain"
           />
-          {/* Hide the text label until extra-large screens */}
           <span className="hidden lg:inline xl:hidden text-xl font-bold text-sky-600 whitespace-nowrap">
             Attest
           </span>
-          {/* full label on large+ screens */}
           <span className="hidden xl:inline text-2xl 2xl:text-3xl font-bold text-sky-600 whitespace-nowrap">
             Attest BioSciences
           </span>
@@ -164,33 +213,41 @@ const Header = () => {
 
         {/* Desktop Navigation */}
         <nav className="hidden lg:flex flex-1 justify-center gap-6 text-gray-700 font-medium min-w-0 whitespace-nowrap overflow-x-auto">
-          {navLinks.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              className={({ isActive }) =>
-                `${baseLink} ${isActive ? activeLink : ""}`
+          {navLoading && <span className="text-slate-400">Loading…</span>}
+          {!navLoading &&
+            navLinks.map((link) => {
+              const isExternal = !!link.external_url && !link.path;
+              const label = link.label ?? "";
+              if (isExternal) {
+                return (
+                  <a
+                    key={link.id}
+                    href={link.external_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={baseLink}
+                  >
+                    {label}
+                  </a>
+                );
               }
-              end={link.to === "/"}
-            >
-              {link.label}
-            </NavLink>
-          ))}
+              return (
+                <NavLink
+                  key={link.id}
+                  to={link.path || "/"}
+                  className={({ isActive }) =>
+                    `${baseLink} ${isActive ? activeLink : ""}`
+                  }
+                  end={(link.path || "/") === "/"}
+                >
+                  {label}
+                </NavLink>
+              );
+            })}
         </nav>
 
-        {/* Right side: CTA + Auth */}
+        {/* Right side: Auth + Cart */}
         <div className="hidden md:flex items-center gap-4 shrink-0 whitespace-nowrap">
-          {/* <div className="hidden lg:flex items-center space-x-2 pr-2 border-r border-slate-200">
-            <PhoneCall className="text-sky-600" />
-            <Link
-              to="/book"
-              className="bg-sky-600 text-white px-4 py-2 rounded-xl hover:bg-sky-700 transition text-sm"
-            >
-              Questions?
-            </Link>
-          </div> */}
-
-          {/* Auth-aware area */}
           {loggedIn ? (
             <div className="flex items-center gap-3">
               <button
@@ -257,7 +314,7 @@ const Header = () => {
                     >
                       Contact us
                     </Link>
-                    {user.isAdmin && (
+                    {user?.isAdmin && (
                       <Link
                         to="/admin"
                         className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-800"
@@ -267,7 +324,6 @@ const Header = () => {
                       </Link>
                     )}
                     <div className="my-1 border-t border-slate-200" />
-
                     <button
                       onClick={handleSignOut}
                       className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-700"
@@ -308,21 +364,41 @@ const Header = () => {
       {/* Mobile Dropdown Menu */}
       {isMenuOpen && (
         <div className="lg:hidden bg-white border-t border-gray-200 shadow-md px-4 py-4 space-y-3 text-gray-700 font-medium">
-          {navLinks.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              className={({ isActive }) =>
-                `block ${baseLink} ${isActive ? activeLink : ""}`
+          {navLoading && <div className="text-slate-400">Loading…</div>}
+          {!navLoading &&
+            navLinks.map((link) => {
+              const isExternal = !!link.external_url && !link.path;
+              const label = link.label ?? "";
+              if (isExternal) {
+                return (
+                  <a
+                    key={link.id}
+                    href={link.external_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`block ${baseLink}`}
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    {label}
+                  </a>
+                );
               }
-              end={link.to === "/"}
-              onClick={() => setIsMenuOpen(false)}
-            >
-              {link.label}
-            </NavLink>
-          ))}
+              return (
+                <NavLink
+                  key={link.id}
+                  to={link.path || "/"}
+                  className={({ isActive }) =>
+                    `block ${baseLink} ${isActive ? activeLink : ""}`
+                  }
+                  end={(link.path || "/") === "/"}
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  {label}
+                </NavLink>
+              );
+            })}
 
-          {/* Mobile auth area */}
+          {/* Mobile Auth Area */}
           <div className="pt-3 mt-2 border-t border-slate-200">
             {loggedIn ? (
               <div className="space-y-2">
@@ -386,6 +462,7 @@ const Header = () => {
           </div>
         </div>
       )}
+
       <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
     </header>
   );
@@ -393,6 +470,7 @@ const Header = () => {
 
 export default Header;
 
+/* -------------------------------- CartDrawer ------------------------------- */
 function formatUSD(n) {
   const v = Number.parseFloat(n ?? 0);
   if (Number.isNaN(v)) return "—";
@@ -420,10 +498,9 @@ function displayFromCents(c) {
 function CartDrawer({ open, onClose }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [cart, setCart] = useState(null); // expanded with tests
+  const [cart, setCart] = useState(null);
   const [error, setError] = useState("");
 
-  // load the cart with expanded tests when opened
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -447,12 +524,12 @@ function CartDrawer({ open, onClose }) {
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open]); // eslint-disable-line
 
   const tests = cart?.expand?.test ?? [];
   const subtotalCents = tests.reduce((sum, t) => sum + cents(t.cost), 0);
   const discountCents = 0;
-  const taxCents = 0; // plug in your tax calc here
+  const taxCents = 0;
   const shippingCents = 0;
   const totalCents = subtotalCents - discountCents + taxCents + shippingCents;
 
@@ -505,7 +582,6 @@ function CartDrawer({ open, onClose }) {
   }
 
   function goCheckout() {
-    // wire this to your checkout route/page
     navigate("/checkout");
   }
 

@@ -25,8 +25,35 @@ const formatUSD = (val) => {
   }
 };
 
+const toDatetimeLocal = (iso) => {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    // Pad helper
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(
+      d.getHours()
+    )}:${p(d.getMinutes())}`;
+  } catch {
+    return "";
+  }
+};
+
+const fromDatetimeLocal = (val) => {
+  // empty → ""
+  if (!val) return "";
+  try {
+    // treat input as local time and convert to ISO string
+    const d = new Date(val);
+    return d.toISOString();
+  } catch {
+    return "";
+  }
+};
+
 /* ---------- Menu ---------- */
 const MENU = [
+  { key: "pages", label: "Pages" }, // ✅ NEW
   { key: "ws_users", label: "Users" },
   { key: "test", label: "Tests" },
   { key: "test_category", label: "Test Categories" },
@@ -36,6 +63,83 @@ const MENU = [
 
 /* ---------- Field configuration ---------- */
 const FIELD_CONFIG = {
+  /* ====== NEW: pages collection config ====== */
+  pages: {
+    listColumns: [
+      { key: "label", header: "Label" },
+      {
+        key: "route",
+        header: "Route",
+        render: (r) => r?.path || r?.external_url || "—",
+      },
+      {
+        key: "show_in_nav",
+        header: "Show in Nav",
+        render: (r) => (r?.show_in_nav ? "Yes" : "No"),
+      },
+      {
+        key: "show_in_footer",
+        header: "Show in Footer",
+        render: (r) => (r?.show_in_footer ? "Yes" : "No"),
+      },
+      {
+        key: "published",
+        header: "Published",
+        render: (r) => (r?.published ? "Yes" : "No"),
+      },
+      {
+        key: "roles",
+        header: "Roles",
+        render: (r) =>
+          Array.isArray(r?.roles) && r.roles.length
+            ? r.roles.join(", ")
+            : "public",
+      },
+      { key: "order", header: "Order" },
+      {
+        key: "window",
+        header: "Window",
+        render: (r) => {
+          const s = r?.start_at ? new Date(r.start_at).toLocaleString() : "—";
+          const e = r?.end_at ? new Date(r.end_at).toLocaleString() : "—";
+          return `${s} → ${e}`;
+        },
+      },
+    ],
+    formFields: [
+      { key: "label", label: "Label", type: "text" },
+      { key: "path", label: "Internal Path (e.g. /tests)", type: "text" },
+      {
+        key: "external_url",
+        label: "External URL (if not path)",
+        type: "text",
+      },
+      { key: "order", label: "Order", type: "number" },
+      {
+        key: "roles",
+        label: "Visible To",
+        type: "multiselect",
+        options: ["public", "authed", "admin"],
+      },
+      { key: "published", label: "Published", type: "checkbox" },
+      { key: "show_in_nav", label: "Show in Nav", type: "checkbox" },
+      { key: "show_in_footer", label: "Show in Footer", type: "checkbox" },
+      { key: "start_at", label: "Start At", type: "datetime" },
+      { key: "end_at", label: "End At", type: "datetime" },
+      // {
+      //   key: "parent",
+      //   label: "Parent (for dropdowns)",
+      //   type: "relation",
+      //   collection: "pages",
+      //   display: "label",
+      // },
+      { key: "icon_name", label: "Icon Name (optional)", type: "text" },
+      { key: "feature_flag", label: "Feature Flag (optional)", type: "text" },
+    ],
+    // sort override for list fetch:
+    sort: "order,label",
+  },
+
   ws_users: {
     listColumns: [
       { key: "email", header: "Email" },
@@ -70,6 +174,11 @@ const FIELD_CONFIG = {
 
   test: {
     listColumns: [
+      {
+        key: "show",
+        header: "Show",
+        render: (r) => (r?.show ? "Yes" : "No"),
+      },
       { key: "name", header: "Name" },
       {
         key: "cat_id",
@@ -100,6 +209,7 @@ const FIELD_CONFIG = {
       },
     ],
     formFields: [
+      { key: "show", label: "Show (visible)", type: "checkbox" },
       { key: "name", label: "Name", type: "text" },
       {
         key: "cat_id",
@@ -120,7 +230,6 @@ const FIELD_CONFIG = {
         label: "Includes Test (Top Level)",
         type: "checkbox",
       },
-      // custom-rendered table in modal
       {
         key: "included_test",
         label: "Included Tests",
@@ -245,7 +354,7 @@ function Textarea(props) {
 async function fetchOptions(collection, display) {
   const list = await pb
     .collection(collection)
-    .getList(1, 500, { sort: "name" });
+    .getList(1, 500, { sort: "name,label" });
   return list.items.map((i) => {
     const path = display.split(".");
     let label = i;
@@ -294,33 +403,13 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
     setInputs((s) => ({ ...s, included_test: next }));
   };
 
-  //   const save = async () => {
-  //     setLoading(true);
-  //     try {
-  //       const formData = new FormData();
-  //       for (const f of cfg.formFields) {
-  //         const v = inputs[f.key];
-  //         if (f.type === "file") {
-  //           if (v instanceof File) formData.append(f.key, v);
-  //           continue;
-  //         }
-  //         if (f.type === "checkbox") formData.append(f.key, v ? "true" : "false");
-  //         else if (f.type === "multirelation")
-  //           formData.append(f.key, Array.isArray(v) ? v.join(",") : "");
-  //         else formData.append(f.key, v ?? "");
-  //       }
-  //       const coll = pb.collection(collection);
-  //       const saved = row?.id
-  //         ? await coll.update(row.id, formData)
-  //         : await coll.create(formData);
-  //       onSaved(saved);
-  //       onClose();
-  //     } catch (e) {
-  //       alert(e?.message ?? "Save failed");
-  //     } finally {
-  //       setLoading(false);
-  //     }
-  //   };
+  const toggleMulti = (key, opt) => {
+    const curr = Array.isArray(inputs[key]) ? inputs[key] : [];
+    const next = curr.includes(opt)
+      ? curr.filter((x) => x !== opt)
+      : [...curr, opt];
+    setInputs((s) => ({ ...s, [key]: next }));
+  };
 
   const save = async () => {
     setLoading(true);
@@ -328,7 +417,17 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
       const formData = new FormData();
 
       for (const f of cfg.formFields) {
-        const v = inputs[f.key];
+        let v = inputs[f.key];
+
+        // validation hint: pages must have either path or external_url (not both)
+        if (collection === "pages") {
+          if (f.key === "path" && v && inputs.external_url) {
+            // prefer whatever admin entered last; no hard stop
+          }
+          if (f.key === "external_url" && v && inputs.path) {
+            // same as above
+          }
+        }
 
         if (f.type === "file") {
           if (v instanceof File) formData.append(f.key, v);
@@ -341,21 +440,43 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
         }
 
         if (f.type === "multirelation") {
-          // PB expects multiple entries with the same key in multipart form:
-          // included_test=ID1&included_test=ID2&...
           const arr = Array.isArray(v) ? v.filter(Boolean) : [];
           if (arr.length) {
             arr.forEach((id) => formData.append(f.key, id));
           } else {
-            // Explicitly clear when empty (PB accepts empty string to clear)
             formData.append(f.key, "");
           }
           continue;
         }
 
         if (f.type === "relation") {
-          // Single relation: send the id or empty string to clear
           formData.append(f.key, v ?? "");
+          continue;
+        }
+
+        if (f.type === "multiselect") {
+          const arr = Array.isArray(v) ? v.filter(Boolean) : [];
+          if (arr.length) {
+            arr.forEach((val) => formData.append(f.key, val));
+          } else {
+            formData.append(f.key, "");
+          }
+          continue;
+        }
+
+        if (f.type === "datetime") {
+          // convert local value to ISO before sending
+          formData.append(f.key, v ? fromDatetimeLocal(v) : "");
+          continue;
+        }
+
+        if (f.type === "number") {
+          // allow empty => "", else numeric
+          if (v === "" || v === null || Number.isNaN(v)) {
+            formData.append(f.key, "");
+          } else {
+            formData.append(f.key, String(v));
+          }
           continue;
         }
 
@@ -400,9 +521,14 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {cfg.formFields.map((f) => {
-            const v = inputs?.[f.key];
+            let v = inputs?.[f.key];
 
-            // Custom: Included Tests as scrollable checkbox table (only when top_level_test is checked)
+            // Coerce datetime field value to datetime-local for UI
+            if (f.type === "datetime") {
+              v = toDatetimeLocal(v);
+            }
+
+            // Custom: Included Tests table (unchanged from your code)
             if (collection === "test" && f.key === "included_test") {
               const showBlock = !!inputs?.top_level_test;
               return (
@@ -431,10 +557,10 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                           </thead>
                           <tbody className="divide-y divide-slate-100 bg-white">
                             {(relationsCache[f.key] || []).map((opt) => {
-                              const checked = Array.isArray(v)
-                                ? v.includes(opt.id)
+                              const checked = Array.isArray(inputs?.[f.key])
+                                ? inputs[f.key].includes(opt.id)
                                 : false;
-                              const disabled = row?.id && opt.id === row.id; // prevent selecting self
+                              const disabled = row?.id && opt.id === row.id;
                               return (
                                 <tr key={opt.id}>
                                   <td className="px-3 py-2 text-sm text-slate-700">
@@ -496,7 +622,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={!!v}
+                      checked={!!inputs?.[f.key]}
                       onChange={(e) => handleChange(f.key, e.target.checked)}
                     />
                   </div>
@@ -526,10 +652,35 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                   </select>
                 )}
 
+                {f.type === "multiselect" && (
+                  <div className="rounded-lg border border-slate-200 p-2">
+                    <div className="flex flex-wrap gap-2">
+                      {f.options.map((opt) => {
+                        const checked = Array.isArray(inputs?.[f.key])
+                          ? inputs[f.key].includes(opt)
+                          : false;
+                        return (
+                          <label
+                            key={opt}
+                            className="flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1 text-xs"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleMulti(f.key, opt)}
+                            />
+                            <span>{opt}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {f.type === "relation" && (
                   <select
                     className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    value={v ?? ""}
+                    value={inputs?.[f.key] ?? ""}
                     onChange={(e) => handleChange(f.key, e.target.value)}
                   >
                     <option value="">—</option>
@@ -539,6 +690,14 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                       </option>
                     ))}
                   </select>
+                )}
+
+                {f.type === "datetime" && (
+                  <Input
+                    type="datetime-local"
+                    value={v ?? ""}
+                    onChange={(e) => handleChange(f.key, e.target.value)}
+                  />
                 )}
               </label>
             );
@@ -572,6 +731,8 @@ function CollectionView({ collection }) {
     if (c === "test" || c === "test_category" || c === "testimonial")
       return `name ~ "${query}"`;
     if (c === "cart") return `status ~ "${query}"`;
+    if (c === "pages")
+      return `label ~ "${query}" || path ~ "${query}" || external_url ~ "${query}"`;
     return "";
   };
 
@@ -583,10 +744,15 @@ function CollectionView({ collection }) {
           ? "cat_id,included_test"
           : collection === "cart"
           ? "user,test"
+          : collection === "pages"
+          ? "parent"
           : undefined;
 
+      const sort =
+        cfg?.sort ?? (collection === "pages" ? "order,label" : "-updated");
+
       const res = await pb.collection(collection).getList(pageNo, 100, {
-        sort: "-updated",
+        sort,
         filter: buildFilter(collection, q),
         expand,
       });
@@ -733,7 +899,7 @@ function CollectionView({ collection }) {
 
 /* ---------- Main Admin Panel ---------- */
 const AdminPanel = () => {
-  const [active, setActive] = useState("ws_users");
+  const [active, setActive] = useState("pages"); // ✅ default to pages first
   const [ready, setReady] = useState(false);
   const navigate = useNavigate();
 
