@@ -16,7 +16,7 @@ const Hero = () => {
       // auto-hide popup after 12s so it doesn't linger forever
       if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
       popupTimerRef.current = setTimeout(() => setShowPopup(false), 12000);
-    }, 90_000);
+    }, 30_000);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);

@@ -21,8 +21,10 @@ import {
 } from "react-router-dom";
 
 const App = () => {
+  const base = (import.meta.env.BASE_URL ?? "/").replace(/\/+$/, "") || "/";
+
   return (
-    <Router basename="/attestbiosciences">
+    <Router basename={base}>
       <Header />
 
       <Routes>
