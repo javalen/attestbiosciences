@@ -1,8 +1,12 @@
 // AdminPanel.jsx (DROP-IN)
-// ✅ Teams CRUD
-// ✅ Team Members are created from Teams via "Add User" (no left-nav link)
-// ✅ When a member is created, it is immediately added to teams.members (or teams.team_menbers)
-// ✅ Uses your server-backed adminApi helpers
+// ✅ Refactor: smaller components for maintainability
+// ✅ Adds Mailing List section:
+//    - time range selector [1 day, 1 week, 1 month, 6 months, 1 year, year to date]
+//    - default = 1 month
+//    - server-side filter: only records with created >= computed start date
+//    - export CSV button
+//    - table w/ checkbox in col 1; checking deletes record (with confirm)
+// ✅ Keeps your existing Teams + Team Members inline edit + image upload behavior
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -13,6 +17,8 @@ import {
   Loader2,
   ChevronLeft,
   Search,
+  Edit3,
+  Download,
 } from "lucide-react";
 import pb from "@/db/pocketbase";
 
@@ -26,6 +32,15 @@ import {
 } from "@/data/adminApi";
 
 /* ---------- Utilities ---------- */
+function fileToObjectUrl(file) {
+  if (!file) return "";
+  try {
+    return URL.createObjectURL(file);
+  } catch {
+    return "";
+  }
+}
+
 const formatUSD = (val) => {
   const n = Number.parseFloat(val ?? "0");
   if (Number.isNaN(n)) return "—";
@@ -87,6 +102,104 @@ function normalizeJsonObject(val) {
   return {};
 }
 
+/* ---------- CSV ---------- */
+function csvEscape(val) {
+  const s = String(val ?? "");
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function flattenRowForCsv(row, columns) {
+  const out = {};
+  for (const k of columns) {
+    const v = row?.[k];
+    if (v == null) out[k] = "";
+    else if (typeof v === "object") out[k] = JSON.stringify(v);
+    else out[k] = String(v);
+  }
+  return out;
+}
+
+function downloadCsv(filename, rows) {
+  if (!rows?.length) {
+    alert("Nothing to export.");
+    return;
+  }
+
+  // Choose columns from union of primitive-ish keys (ignore expand)
+  const keySet = new Set();
+  for (const r of rows) {
+    Object.keys(r || {}).forEach((k) => {
+      if (k === "expand") return;
+      keySet.add(k);
+    });
+  }
+  const columns = Array.from(keySet);
+
+  const flat = rows.map((r) => flattenRowForCsv(r, columns));
+  const header = columns.map(csvEscape).join(",");
+  const body = flat
+    .map((r) => columns.map((c) => csvEscape(r[c])).join(","))
+    .join("\n");
+
+  const csv = `${header}\n${body}`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 2500);
+}
+
+/* ---------- Date ranges (Mailing List) ---------- */
+const TIME_RANGES = [
+  { key: "1d", label: "1 day" },
+  { key: "1w", label: "1 week" },
+  { key: "1m", label: "1 month" },
+  { key: "6m", label: "6 months" },
+  { key: "1y", label: "1 year" },
+  { key: "ytd", label: "Year to date" },
+];
+
+function computeStartISO(rangeKey) {
+  const now = new Date();
+  const d = new Date(now);
+
+  if (rangeKey === "ytd") {
+    d.setMonth(0, 1);
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+
+  switch (rangeKey) {
+    case "1d":
+      d.setDate(d.getDate() - 1);
+      break;
+    case "1w":
+      d.setDate(d.getDate() - 7);
+      break;
+    case "1m":
+      d.setMonth(d.getMonth() - 1);
+      break;
+    case "6m":
+      d.setMonth(d.getMonth() - 6);
+      break;
+    case "1y":
+      d.setFullYear(d.getFullYear() - 1);
+      break;
+    default:
+      d.setMonth(d.getMonth() - 1);
+      break;
+  }
+
+  return d.toISOString();
+}
+
 /* ---------- Menu ---------- */
 const MENU = [
   { key: "pages", label: "Pages" },
@@ -96,6 +209,7 @@ const MENU = [
   { key: "test_category", label: "Test Categories" },
   { key: "cart", label: "Carts" },
   { key: "testimonial", label: "Testimonials" },
+  { key: "mailing_list", label: "Mailing List" }, // ✅ NEW
 ];
 
 /**
@@ -106,19 +220,16 @@ const MEMBERS_FIELD_CANDIDATES = ["members", "team_menbers"];
 
 function pickMembersFieldFromRecord(r) {
   if (!r) return MEMBERS_FIELD_CANDIDATES[0];
-
-  // Prefer a field that exists on the record (ids array)
   for (const k of MEMBERS_FIELD_CANDIDATES) {
     if (Array.isArray(r?.[k])) return k;
   }
-  // Prefer a field that exists in expand
   for (const k of MEMBERS_FIELD_CANDIDATES) {
     if (Array.isArray(r?.expand?.[k])) return k;
   }
   return MEMBERS_FIELD_CANDIDATES[0];
 }
 
-/* ---------- Field configuration ---------- */
+/* ---------- Field configuration (CRUD sections) ---------- */
 const FIELD_CONFIG = {
   pages: {
     listColumns: [
@@ -212,7 +323,6 @@ const FIELD_CONFIG = {
     ],
   },
 
-  /* ✅ Teams */
   teams: {
     listColumns: [
       { key: "title", header: "Title" },
@@ -233,8 +343,6 @@ const FIELD_CONFIG = {
     formFields: [
       { key: "title", label: "Title", type: "text" },
       { key: "order", label: "Order", type: "number" },
-
-      // keep a single config slot, but we’ll read/write whichever key exists
       {
         key: "members",
         label: "Members",
@@ -246,15 +354,12 @@ const FIELD_CONFIG = {
     sort: "order,title",
   },
 
-  /* (Hidden) team_members config used by Add User modal */
   team_members: {
     formFields: [
       { key: "name", label: "Name", type: "text" },
       { key: "role", label: "Role", type: "text" },
       { key: "bio", label: "Bio", type: "textarea" },
-      { key: "image", label: "Image (url/filename)", type: "text" },
-      { key: "tags", label: "Tags (JSON array)", type: "json" },
-      { key: "socials", label: "Socials (JSON object)", type: "json" },
+      { key: "image", label: "Profile Image", type: "file" },
       { key: "order", label: "Order", type: "number" },
     ],
   },
@@ -404,9 +509,8 @@ const FIELD_CONFIG = {
   },
 };
 
-/* ---------- Small UI helpers ---------- */
-function Button(props) {
-  const { className = "", variant = "primary", ...rest } = props;
+/* ---------- UI Primitives ---------- */
+function UIButton({ className = "", variant = "primary", ...rest }) {
   const base =
     variant === "primary"
       ? "bg-slate-900 text-white hover:bg-slate-800"
@@ -414,12 +518,11 @@ function Button(props) {
   return (
     <button
       {...rest}
-      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${base} ${className}`}
+      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-60 ${base} ${className}`}
     />
   );
 }
-function Input(props) {
-  const { className = "", ...rest } = props;
+function UIInput({ className = "", ...rest }) {
   return (
     <input
       {...rest}
@@ -427,8 +530,7 @@ function Input(props) {
     />
   );
 }
-function Textarea(props) {
-  const { className = "", ...rest } = props;
+function UITextarea({ className = "", ...rest }) {
   return (
     <textarea
       {...rest}
@@ -437,12 +539,13 @@ function Textarea(props) {
   );
 }
 
-/* ---------- Helpers ---------- */
+/* ---------- Options helper ---------- */
 async function fetchOptions(collection, display) {
   const res = await adminOptions(collection, { display, sort: "name,label" });
   return res.options || [];
 }
 
+/* ---------- JsonEditor ---------- */
 function JsonEditor({ value, onChange, placeholder }) {
   const [txt, setTxt] = useState(() => {
     if (value == null || value === "") return "";
@@ -489,7 +592,7 @@ function JsonEditor({ value, onChange, placeholder }) {
 
   return (
     <div>
-      <Textarea
+      <UITextarea
         rows={6}
         value={txt}
         placeholder={placeholder}
@@ -500,8 +603,11 @@ function JsonEditor({ value, onChange, placeholder }) {
   );
 }
 
-/* ---------- Add User (team_member) modal ---------- */
-function AddTeamMemberModal({ open, onClose, onCreated }) {
+/* ============================================================================
+   Team Member Modals (kept, but isolated)
+============================================================================ */
+
+function EditTeamMemberModal({ open, onClose, member, onSaved, onDeleted }) {
   const [inputs, setInputs] = useState({
     name: "",
     role: "",
@@ -511,6 +617,248 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
     socials: {},
     order: "",
   });
+  console.log("Member", member);
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const m = member || {};
+    setInputs({
+      name: m.name ?? "",
+      role: m.role ?? "",
+      bio: m.bio ?? "",
+      image: m.image ?? "",
+      tags: normalizeJsonArray(m.tags),
+      socials: normalizeJsonObject(m.socials),
+      order: m.order ?? "",
+    });
+
+    setImageFile(null);
+    setImagePreview("");
+  }, [open, member]);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview?.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
+
+  const handle = (k, v) => setInputs((s) => ({ ...s, [k]: v }));
+
+  const save = async () => {
+    if (!member?.id) return;
+    setSaving(true);
+
+    try {
+      const fd = new FormData();
+      fd.set("name", inputs.name ?? "");
+      fd.set("role", inputs.role ?? "");
+      fd.set("bio", inputs.bio ?? "");
+      fd.set(
+        "order",
+        inputs.order === "" || inputs.order == null ? "" : String(inputs.order)
+      );
+      fd.set("tags", JSON.stringify(inputs.tags ?? []));
+      fd.set("socials", JSON.stringify(inputs.socials ?? {}));
+      if (imageFile) fd.set("image", imageFile);
+
+      const res = await adminUpdate("team_members", member.id, fd);
+      onSaved?.(res?.item);
+      onClose?.();
+    } catch (e) {
+      alert(e?.message ?? "Failed to update member");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const del = async () => {
+    if (!member?.id) return;
+
+    const ok = window.confirm(
+      `Delete member "${member?.name || member?.id}"?\n\nThis cannot be undone.`
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    try {
+      await adminDelete("team_members", member.id);
+      onDeleted?.(member.id);
+      onClose?.();
+    } catch (e) {
+      alert(e?.message ?? "Failed to delete member");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  const existingImage = inputs.image ? String(inputs.image) : "";
+  const previewSrc = imagePreview || (existingImage ? existingImage : "");
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ChevronLeft className="h-5 w-5 cursor-pointer" onClick={onClose} />
+            <h2 className="text-lg font-semibold">Edit Team Member</h2>
+          </div>
+          <UIButton
+            onClick={save}
+            disabled={saving || deleting || !inputs.name?.trim()}
+          >
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Pencil className="h-4 w-4" />
+            )}
+            Save
+          </UIButton>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700">Name</span>
+            <UIInput
+              value={inputs.name}
+              onChange={(e) => handle("name", e.target.value)}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700">Role</span>
+            <UIInput
+              value={inputs.role}
+              onChange={(e) => handle("role", e.target.value)}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm md:col-span-2">
+            <span className="font-medium text-slate-700">Bio</span>
+            <UITextarea
+              rows={4}
+              value={inputs.bio}
+              onChange={(e) => handle("bio", e.target.value)}
+            />
+          </label>
+
+          <div className="md:col-span-2">
+            <div className="mb-1 text-sm font-medium text-slate-700">
+              Profile Image
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="h-16 w-16 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                {previewSrc ? (
+                  <img
+                    src={pb.files.getURL(member, member.image)}
+                    alt="preview"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
+                    —
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setImageFile(f);
+                    if (imagePreview?.startsWith("blob:"))
+                      URL.revokeObjectURL(imagePreview);
+                    setImagePreview(f ? fileToObjectUrl(f) : "");
+                  }}
+                />
+                <div className="mt-1 text-xs text-slate-500">
+                  Upload a JPG/PNG/WebP. Saving will replace the current image.
+                </div>
+              </div>
+
+              {(imageFile || inputs.image) && (
+                <UIButton
+                  type="button"
+                  variant="ghost"
+                  className="border border-slate-200"
+                  onClick={() => {
+                    setImageFile(null);
+                    if (imagePreview?.startsWith("blob:"))
+                      URL.revokeObjectURL(imagePreview);
+                    setImagePreview("");
+                  }}
+                >
+                  Clear
+                </UIButton>
+              )}
+            </div>
+          </div>
+
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700">Order</span>
+            <UIInput
+              type="number"
+              value={inputs.order}
+              onChange={(e) =>
+                handle(
+                  "order",
+                  e.target.value === "" ? "" : e.target.valueAsNumber
+                )
+              }
+            />
+          </label>
+        </div>
+
+        <div className="mt-5 flex items-center justify-between">
+          <UIButton variant="ghost" onClick={onClose}>
+            Cancel
+          </UIButton>
+
+          <button
+            onClick={del}
+            disabled={saving || deleting}
+            className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+            title="Delete member"
+          >
+            {deleting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            Delete member
+          </button>
+        </div>
+
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <b>Warning:</b> deleting a member removes the record from PocketBase.
+          You may also want to remove them from any teams that reference them.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddTeamMemberModal({ open, onClose, onCreated }) {
+  const [inputs, setInputs] = useState({
+    name: "",
+    role: "",
+    bio: "",
+    tags: [],
+    socials: {},
+    order: "",
+  });
+
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -519,32 +867,40 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
       name: "",
       role: "",
       bio: "",
-      image: "",
       tags: [],
       socials: {},
       order: "",
     });
+    setImageFile(null);
+    if (imagePreview?.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    setImagePreview("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview?.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
 
   const handle = (k, v) => setInputs((s) => ({ ...s, [k]: v }));
 
   const save = async () => {
     setSaving(true);
     try {
-      const payload = {
-        name: inputs.name ?? "",
-        role: inputs.role ?? "",
-        bio: inputs.bio ?? "",
-        image: inputs.image ?? "",
-        tags: inputs.tags === "" ? "" : inputs.tags,
-        socials: inputs.socials === "" ? "" : inputs.socials,
-        order:
-          inputs.order === "" || inputs.order == null
-            ? ""
-            : Number(inputs.order),
-      };
+      const fd = new FormData();
+      fd.set("name", inputs.name ?? "");
+      fd.set("role", inputs.role ?? "");
+      fd.set("bio", inputs.bio ?? "");
+      fd.set(
+        "order",
+        inputs.order === "" || inputs.order == null ? "" : String(inputs.order)
+      );
+      fd.set("tags", JSON.stringify(inputs.tags ?? []));
+      fd.set("socials", JSON.stringify(inputs.socials ?? {}));
+      if (imageFile) fd.set("image", imageFile);
 
-      const res = await adminCreate("team_members", payload);
+      const res = await adminCreate("team_members", fd);
       const created = res?.item;
       if (created?.id) onCreated?.(created);
       onClose?.();
@@ -565,20 +921,20 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
             <ChevronLeft className="h-5 w-5 cursor-pointer" onClick={onClose} />
             <h2 className="text-lg font-semibold">Add User</h2>
           </div>
-          <Button onClick={save} disabled={saving || !inputs.name?.trim()}>
+          <UIButton onClick={save} disabled={saving || !inputs.name?.trim()}>
             {saving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Pencil className="h-4 w-4" />
             )}
             Save
-          </Button>
+          </UIButton>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-slate-700">Name</span>
-            <Input
+            <UIInput
               value={inputs.name}
               onChange={(e) => handle("name", e.target.value)}
             />
@@ -586,7 +942,7 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
 
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-slate-700">Role</span>
-            <Input
+            <UIInput
               value={inputs.role}
               onChange={(e) => handle("role", e.target.value)}
             />
@@ -594,26 +950,71 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
 
           <label className="flex flex-col gap-1 text-sm md:col-span-2">
             <span className="font-medium text-slate-700">Bio</span>
-            <Textarea
+            <UITextarea
               rows={4}
               value={inputs.bio}
               onChange={(e) => handle("bio", e.target.value)}
             />
           </label>
 
-          <label className="flex flex-col gap-1 text-sm md:col-span-2">
-            <span className="font-medium text-slate-700">
-              Image (url/filename)
-            </span>
-            <Input
-              value={inputs.image}
-              onChange={(e) => handle("image", e.target.value)}
-            />
-          </label>
+          <div className="md:col-span-2">
+            <div className="mb-1 text-sm font-medium text-slate-700">
+              Profile Image
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="h-16 w-16 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                {imagePreview ? (
+                  <img
+                    src={imagePreview}
+                    alt="preview"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
+                    —
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setImageFile(f);
+                    if (imagePreview?.startsWith("blob:"))
+                      URL.revokeObjectURL(imagePreview);
+                    setImagePreview(f ? fileToObjectUrl(f) : "");
+                  }}
+                />
+                <div className="mt-1 text-xs text-slate-500">
+                  Upload a JPG/PNG/WebP.
+                </div>
+              </div>
+
+              {imageFile && (
+                <UIButton
+                  type="button"
+                  variant="ghost"
+                  className="border border-slate-200"
+                  onClick={() => {
+                    setImageFile(null);
+                    if (imagePreview?.startsWith("blob:"))
+                      URL.revokeObjectURL(imagePreview);
+                    setImagePreview("");
+                  }}
+                >
+                  Clear
+                </UIButton>
+              )}
+            </div>
+          </div>
 
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-slate-700">Order</span>
-            <Input
+            <UIInput
               type="number"
               value={inputs.order}
               onChange={(e) =>
@@ -649,24 +1050,28 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
         </div>
 
         <div className="mt-5 flex justify-end">
-          <Button variant="ghost" onClick={onClose}>
+          <UIButton variant="ghost" onClick={onClose}>
             Cancel
-          </Button>
+          </UIButton>
         </div>
       </div>
     </div>
   );
 }
 
-/* ---------- Add/Edit modal ---------- */
+/* ============================================================================
+   Generic Edit Modal (CRUD)
+============================================================================ */
 function EditModal({ open, onClose, collection, row, onSaved }) {
   const cfg = FIELD_CONFIG[collection];
   const [inputs, setInputs] = useState({});
   const [loading, setLoading] = useState(false);
   const [relationsCache, setRelationsCache] = useState({});
-  const [addUserOpen, setAddUserOpen] = useState(false);
 
-  // detect actual members field for this record while editing a team
+  const [addUserOpen, setAddUserOpen] = useState(false);
+  const [memberEditOpen, setMemberEditOpen] = useState(false);
+  const [memberToEdit, setMemberToEdit] = useState(null);
+
   const membersKey =
     collection === "teams" ? pickMembersFieldFromRecord(inputs || row) : null;
 
@@ -690,7 +1095,6 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
       const map = {};
       entries.forEach(([k, v]) => (map[k] = v));
 
-      // Teams members can be either `members` or `team_menbers`; cache options under both keys
       if (collection === "teams") {
         const opts = await fetchOptions("team_members", "name");
         for (const k of MEMBERS_FIELD_CANDIDATES) map[k] = opts;
@@ -736,36 +1140,36 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
     const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
     const next = curr.includes(memberId) ? curr : [...curr, memberId];
 
-    // update local UI immediately
     handleChange(key, next);
 
-    // persist immediately if editing existing team
     if (collection === "teams" && row?.id) {
       await adminUpdate("teams", row.id, { [key]: next });
       onSaved?.();
     }
   };
 
-  const save = async () => {
-    setLoading(true);
-    try {
+  const removeMemberFromTeamNow = async (memberId) => {
+    const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
+    const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
+    const next = curr.filter((x) => x !== memberId);
+    handleChange(key, next);
+
+    if (collection === "teams" && row?.id) {
+      await adminUpdate("teams", row.id, { [key]: next });
+      onSaved?.();
+    }
+  };
+
+  const buildPayload = () => {
+    const hasFile = cfg.formFields.some(
+      (f) => f.type === "file" && inputs?.[f.key] instanceof File
+    );
+
+    if (!hasFile) {
+      // normal JSON payload
       const payload = {};
-
       for (const f of cfg.formFields) {
-        // Special-case: teams "Members" field - write to detected key
-        if (
-          collection === "teams" &&
-          f.type === "multirelation" &&
-          f.collection === "team_members"
-        ) {
-          const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
-          const v = inputs?.[key] ?? inputs?.[f.key];
-          payload[key] = Array.isArray(v) ? v : [];
-          continue;
-        }
-
         let v = inputs[f.key];
-
         if (f.type === "checkbox") payload[f.key] = !!v;
         else if (f.type === "datetime")
           payload[f.key] = v ? fromDatetimeLocal(v) : "";
@@ -780,6 +1184,45 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
           payload[f.key] = v === "" || v == null ? "" : v;
         else payload[f.key] = v ?? "";
       }
+      return payload;
+    }
+
+    // FormData payload for file uploads
+    const fd = new FormData();
+
+    for (const f of cfg.formFields) {
+      let v = inputs[f.key];
+
+      if (f.type === "checkbox") fd.append(f.key, String(!!v));
+      else if (f.type === "datetime")
+        fd.append(f.key, v ? fromDatetimeLocal(v) : "");
+      else if (f.type === "number")
+        fd.append(f.key, v === "" || v == null ? "" : String(v));
+      else if (f.type === "relation") fd.append(f.key, v ?? "");
+      else if (f.type === "multirelation") {
+        const arr = Array.isArray(v) ? v : [];
+        arr.forEach((id) => fd.append(f.key, id));
+      } else if (f.type === "multiselect") {
+        const arr = Array.isArray(v) ? v : [];
+        arr.forEach((opt) => fd.append(f.key, opt));
+      } else if (f.type === "json") {
+        if (v === "" || v == null) fd.append(f.key, "");
+        else fd.append(f.key, typeof v === "string" ? v : JSON.stringify(v));
+      } else if (f.type === "file") {
+        // if user selected a File, attach; if not, do nothing (PB keeps existing)
+        if (v instanceof File) fd.append(f.key, v);
+      } else {
+        fd.append(f.key, v ?? "");
+      }
+    }
+
+    return fd;
+  };
+
+  const save = async () => {
+    setLoading(true);
+    try {
+      const payload = buildPayload();
 
       const saved = row?.id
         ? await adminUpdate(collection, row.id, payload)
@@ -806,22 +1249,42 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
               {row?.id ? "Edit" : "Add"} {collection}
             </h2>
           </div>
-          <Button onClick={save} disabled={loading}>
+          <UIButton onClick={save} disabled={loading}>
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Pencil className="h-4 w-4" />
             )}
             Save
-          </Button>
+          </UIButton>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {cfg.formFields.map((f) => {
+            {
+              f.type === "file" && (
+                <div className="flex items-center gap-3">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      handleChange(f.key, file);
+                    }}
+                  />
+                  {inputs?.[f.key] instanceof File && (
+                    <span className="text-xs text-slate-500">
+                      {inputs[f.key].name}
+                    </span>
+                  )}
+                </div>
+              );
+            }
+
             let v = inputs?.[f.key];
             if (f.type === "datetime") v = toDatetimeLocal(v);
 
-            // existing special-case: included tests selector
+            // Included tests selector
             if (collection === "test" && f.key === "included_test") {
               const showBlock = !!inputs?.top_level_test;
               return (
@@ -879,7 +1342,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
               );
             }
 
-            // ✅ Teams Members block with "Add User" (auto-detect members key)
+            // Teams Members block (checkbox list + edit icon + Add User)
             if (
               collection === "teams" &&
               f.type === "multirelation" &&
@@ -889,13 +1352,25 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
               const opts = relationsCache[key] || [];
               const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
 
+              const memberById = (id) => {
+                const expandedArr = Array.isArray(inputs?.expand?.[key])
+                  ? inputs.expand[key]
+                  : Array.isArray(row?.expand?.[key])
+                  ? row.expand[key]
+                  : null;
+                const fromExpand = expandedArr?.find((m) => m?.id === id);
+                if (fromExpand) return fromExpand;
+                const opt = (opts || []).find((o) => o.id === id);
+                return opt ? { id: opt.id, name: opt.label } : { id };
+              };
+
               return (
                 <div key={f.key} className="md:col-span-2">
                   <div className="mb-2 flex items-center justify-between">
                     <div className="text-sm font-medium text-slate-700">
                       {f.label}
                     </div>
-                    <Button
+                    <UIButton
                       type="button"
                       variant="ghost"
                       onClick={() => setAddUserOpen(true)}
@@ -903,15 +1378,16 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                     >
                       <Plus className="h-4 w-4" />
                       Add User
-                    </Button>
+                    </UIButton>
                   </div>
 
                   <div className="rounded-lg border border-slate-200 p-2">
                     <div className="flex flex-wrap gap-2">
                       {opts.map((o) => {
                         const checked = curr.includes(o.id);
+
                         return (
-                          <label
+                          <div
                             key={o.id}
                             className={`flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${
                               checked
@@ -919,18 +1395,36 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                                 : "border-slate-200"
                             }`}
                           >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                const next = checked
-                                  ? curr.filter((x) => x !== o.id)
-                                  : [...curr, o.id];
-                                handleChange(key, next);
-                              }}
-                            />
-                            <span>{o.label}</span>
-                          </label>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  const next = checked
+                                    ? curr.filter((x) => x !== o.id)
+                                    : [...curr, o.id];
+                                  handleChange(key, next);
+                                }}
+                              />
+                              <span>{o.label}</span>
+                            </label>
+
+                            {checked && (
+                              <button
+                                type="button"
+                                title="Edit member"
+                                className="ml-1 inline-flex items-center justify-center rounded-md p-1 text-slate-600 hover:bg-slate-200"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setMemberToEdit(memberById(o.id));
+                                  setMemberEditOpen(true);
+                                }}
+                              >
+                                <Edit3 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
 
@@ -955,6 +1449,34 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                       await attachMemberToTeamNow(created.id);
                     }}
                   />
+
+                  <EditTeamMemberModal
+                    open={memberEditOpen}
+                    member={memberToEdit}
+                    onClose={() => {
+                      setMemberEditOpen(false);
+                      setMemberToEdit(null);
+                    }}
+                    onSaved={async () => {
+                      await refreshTeamMemberOptions();
+                      if (row?.id) {
+                        const fresh = await adminList("teams", {
+                          page: 1,
+                          perPage: 1,
+                          sort: "",
+                          filter: `id = "${row.id}"`,
+                          expand: MEMBERS_FIELD_CANDIDATES.join(","),
+                        });
+                        const nextTeam = fresh?.items?.[0];
+                        if (nextTeam) setInputs(nextTeam);
+                      }
+                      onSaved?.();
+                    }}
+                    onDeleted={async (deletedId) => {
+                      await removeMemberFromTeamNow(deletedId);
+                      await refreshTeamMemberOptions();
+                    }}
+                  />
                 </div>
               );
             }
@@ -964,14 +1486,14 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                 <span className="font-medium text-slate-700">{f.label}</span>
 
                 {f.type === "text" && (
-                  <Input
+                  <UIInput
                     value={v ?? ""}
                     onChange={(e) => handleChange(f.key, e.target.value)}
                   />
                 )}
 
                 {f.type === "number" && (
-                  <Input
+                  <UIInput
                     type="number"
                     value={v ?? ""}
                     onChange={(e) =>
@@ -984,7 +1506,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                 )}
 
                 {f.type === "textarea" && (
-                  <Textarea
+                  <UITextarea
                     rows={4}
                     value={v ?? ""}
                     onChange={(e) => handleChange(f.key, e.target.value)}
@@ -1057,7 +1579,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                 )}
 
                 {f.type === "datetime" && (
-                  <Input
+                  <UIInput
                     type="datetime-local"
                     value={v ?? ""}
                     onChange={(e) => handleChange(f.key, e.target.value)}
@@ -1081,17 +1603,58 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
         </div>
 
         <div className="mt-5 flex justify-end">
-          <Button variant="ghost" onClick={onClose}>
+          <UIButton variant="ghost" onClick={onClose}>
             Cancel
-          </Button>
+          </UIButton>
         </div>
       </div>
     </div>
   );
 }
 
-/* ---------- Table + actions ---------- */
-function CollectionView({ collection }) {
+/* ============================================================================
+   SideNav + Page Shell
+============================================================================ */
+function SideNav({ active, onSelect }) {
+  return (
+    <aside className="w-60 shrink-0 rounded-2xl border border-slate-200 bg-white p-3">
+      <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        Control Panel
+      </div>
+      <nav className="space-y-1">
+        {MENU.map((m) => {
+          const activeCls =
+            m.key === active
+              ? "bg-slate-900 text-white"
+              : "hover:bg-slate-100 text-slate-700";
+          return (
+            <button
+              key={m.key}
+              onClick={() => onSelect(m.key)}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium ${activeCls}`}
+            >
+              {m.label}
+            </button>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
+
+function PageHeader({ title, right }) {
+  return (
+    <div className="mb-4 flex items-center justify-between gap-3">
+      <h1 className="text-lg font-semibold">{title}</h1>
+      <div className="flex items-center gap-2">{right}</div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   CRUD view for standard collections
+============================================================================ */
+function CollectionCrudView({ collection }) {
   const cfg = FIELD_CONFIG[collection];
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1121,10 +1684,8 @@ function CollectionView({ collection }) {
           ? "cat_id,included_test"
           : collection === "cart"
           ? "user,test"
-          : collection === "pages"
-          ? "parent"
           : collection === "teams"
-          ? MEMBERS_FIELD_CANDIDATES.join(",") // ✅ expand BOTH: "members,team_menbers"
+          ? MEMBERS_FIELD_CANDIDATES.join(",")
           : undefined;
 
       const sort =
@@ -1174,7 +1735,7 @@ function CollectionView({ collection }) {
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
-            <Input
+            <UIInput
               placeholder="Search…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -1182,14 +1743,14 @@ function CollectionView({ collection }) {
               className="pl-8"
             />
           </div>
-          <Button variant="ghost" onClick={() => load(1)}>
+          <UIButton variant="ghost" onClick={() => load(1)}>
             Refresh
-          </Button>
+          </UIButton>
         </div>
-        <Button onClick={openAdd}>
+        <UIButton onClick={openAdd}>
           <Plus className="h-4 w-4" />
           Add New
-        </Button>
+        </UIButton>
       </div>
 
       <div className="rounded-xl border border-slate-200 overflow-hidden">
@@ -1276,8 +1837,154 @@ function CollectionView({ collection }) {
   );
 }
 
-/* ---------- Main Admin Panel ---------- */
-const AdminPanel = () => {
+/* ============================================================================
+   ✅ Mailing List view (time filter + export + checkbox delete)
+============================================================================ */
+function MailingListView() {
+  const [range, setRange] = useState("1m");
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const startISO = computeStartISO(range);
+
+      const search = q.trim()
+        ? `(fname ~ "${q}" || lname ~ "${q}" || email ~ "${q}" || phone ~ "${q}")`
+        : "";
+
+      const filter = search
+        ? `created >= "${startISO}" && ${search}`
+        : `created >= "${startISO}"`;
+
+      const res = await adminList("mailing_list", {
+        page: 1,
+        perPage: 500,
+        sort: "-created",
+        filter,
+      });
+
+      setRows(res.items || []);
+    } catch (e) {
+      alert("Failed loading mailing list");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, [range]);
+
+  const deleteRow = async (row) => {
+    if (!window.confirm(`Delete ${row.email}?`)) return;
+    await adminDelete("mailing_list", row.id);
+    setRows((s) => s.filter((r) => r.id !== row.id));
+  };
+
+  const exportCsv = () => {
+    const data = rows.map((r) => ({
+      fname: r.fname || "",
+      lname: r.lname || "",
+      email: r.email || "",
+      phone: r.phone || "",
+      created: r.created ? new Date(r.created).toLocaleString() : "",
+    }));
+    downloadCsv("attest_leads.csv", data);
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex justify-between">
+        <div className="flex gap-2">
+          <select
+            value={range}
+            onChange={(e) => setRange(e.target.value)}
+            className="border rounded px-3 py-2"
+          >
+            <option value="1d">1 Day</option>
+            <option value="1w">1 Week</option>
+            <option value="1m">1 Month</option>
+            <option value="6m">6 Months</option>
+            <option value="1y">1 Year</option>
+            <option value="ytd">Year to Date</option>
+          </select>
+
+          <input
+            placeholder="Search leads..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && load()}
+            className="border rounded px-3 py-2"
+          />
+        </div>
+
+        <button
+          onClick={exportCsv}
+          className="bg-black text-white px-4 py-2 rounded"
+        >
+          Export CSV
+        </button>
+      </div>
+
+      <div className="border rounded overflow-hidden">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th></th>
+              <th>First</th>
+              <th>Last</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {loading && (
+              <tr>
+                <td colSpan={6} className="p-4 text-center">
+                  Loading…
+                </td>
+              </tr>
+            )}
+
+            {!loading &&
+              rows.map((r) => (
+                <tr key={r.id} className="border-t hover:bg-gray-50">
+                  <td className="p-2">
+                    <input type="checkbox" onChange={() => deleteRow(r)} />
+                  </td>
+                  <td className="p-2">{r.fname}</td>
+                  <td className="p-2">{r.lname}</td>
+                  <td className="p-2 font-medium">{r.email}</td>
+                  <td className="p-2">{r.phone}</td>
+                  <td className="p-2">
+                    {new Date(r.created).toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+
+            {!loading && rows.length === 0 && (
+              <tr>
+                <td colSpan={6} className="p-4 text-center text-gray-400">
+                  No leads in this range.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   Main Admin Panel
+============================================================================ */
+export default function AdminPanel() {
   const [active, setActive] = useState("pages");
   const [ready, setReady] = useState(false);
   const navigate = useNavigate();
@@ -1306,41 +2013,21 @@ const AdminPanel = () => {
     );
   }
 
+  const title = MENU.find((m) => m.key === active)?.label || active;
+
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-[520px] gap-5">
-      <aside className="w-60 shrink-0 rounded-2xl border border-slate-200 bg-white p-3">
-        <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-          Control Panel
-        </div>
-        <nav className="space-y-1">
-          {MENU.map((m) => {
-            const activeCls =
-              m.key === active
-                ? "bg-slate-900 text-white"
-                : "hover:bg-slate-100 text-slate-700";
-            return (
-              <button
-                key={m.key}
-                onClick={() => setActive(m.key)}
-                className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium ${activeCls}`}
-              >
-                {m.label}
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
+      <SideNav active={active} onSelect={setActive} />
 
       <main className="flex-1 rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-lg font-semibold">
-            {MENU.find((m) => m.key === active)?.label}
-          </h1>
-        </div>
-        <CollectionView collection={active} />
+        <PageHeader title={title} />
+
+        {active === "mailing_list" ? (
+          <MailingListView />
+        ) : (
+          <CollectionCrudView collection={active} />
+        )}
       </main>
     </div>
   );
-};
-
-export default AdminPanel;
+}

@@ -19,6 +19,7 @@ import {
   Route,
   Navigate,
 } from "react-router-dom";
+import WaitList from "./components/WaitList";
 
 const App = () => {
   const base = (import.meta.env.BASE_URL ?? "/").replace(/\/+$/, "") || "/";
@@ -40,6 +41,7 @@ const App = () => {
         <Route path="/login" element={<AuthPage />} />
         <Route path="/testimonials/new" element={<TestimonialNew />} />
         <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/wait" element={<WaitList />} />
         {/* Fallback to home */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

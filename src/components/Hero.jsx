@@ -60,7 +60,7 @@ const Hero = () => {
             </NavLink>
 
             <Link
-              to="/login"
+              to="/wait"
               className="inline-flex items-center px-5 py-3 rounded-xl border border-sky-600 text-sky-700 hover:bg-sky-50 transition text-base font-medium"
             >
               Join the Waitlist

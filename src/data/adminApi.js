@@ -1,114 +1,107 @@
+// /src/data/adminApi.js (DROP-IN)
 import pb from "@/db/pocketbase";
 
-const API_BASE = (import.meta.env.VITE_PUBLIC_API_BASE || "").replace(
-  /\/+$/,
-  ""
-);
+const ORIGIN = window.location.origin;
+const BASE = String(import.meta.env.BASE_URL || "/").replace(/\/+$/, ""); // "/attestbiosciences" or ""
+const API_ROOT =
+  String(import.meta.env.VITE_PUBLIC_API_BASE || "").replace(/\/+$/, "") ||
+  `${ORIGIN}${BASE}`; // e.g. http://localhost:5173/attestbiosciences
 
-function authHeaders() {
-  const token = pb?.authStore?.token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+function isFormData(body) {
+  return typeof FormData !== "undefined" && body instanceof FormData;
 }
 
-async function parse(res) {
-  const text = await res.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text;
+async function apiFetch(path, { method = "GET", body, token } = {}) {
+  if (!API_ROOT) {
+    throw new Error("Missing API base. Set VITE_PUBLIC_API_BASE or Vite base.");
   }
+
+  const headers = {};
+  const form = isFormData(body);
+
+  // Only set JSON headers if NOT FormData
+  if (!form) headers["Content-Type"] = "application/json";
+
+  const t = token || pb.authStore?.token;
+  if (t) headers.Authorization = `Bearer ${t}`;
+
+  const res = await fetch(`${API_ROOT}${path}`, {
+    method,
+    headers,
+    body: body ? (form ? body : JSON.stringify(body)) : undefined,
+  });
+
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // ignore non-json
+  }
+
   if (!res.ok) {
     const msg =
-      (data && (data.error || data.message)) ||
-      `Request failed (${res.status})`;
+      json?.error || json?.message || `Request failed (${res.status})`;
     const err = new Error(msg);
     err.status = res.status;
-    err.data = data;
+    err.payload = json;
     throw err;
   }
-  return data;
+
+  return json ?? {};
 }
 
-export async function adminMe() {
-  const res = await fetch(`${API_BASE}/api/admin/me`, {
-    headers: { ...authHeaders() },
-  });
-  return parse(res);
-}
+/* ---------------- Admin helpers (match server.js) ---------------- */
 
-export async function adminList(
-  collection,
-  { page = 1, perPage = 100, sort, filter, expand } = {}
-) {
+export const adminMe = () => apiFetch("/api/admin/me");
+
+export const adminList = (collection, params = {}) => {
   const qs = new URLSearchParams();
-  qs.set("page", String(page));
-  qs.set("perPage", String(perPage));
-  if (sort) qs.set("sort", sort);
-  if (filter) qs.set("filter", filter);
-  if (expand) qs.set("expand", expand);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v == null) return;
+    const s = String(v);
+    if (!s) return;
+    qs.set(k, s);
+  });
 
-  const res = await fetch(
-    `${API_BASE}/api/admin/${collection}?${qs.toString()}`,
-    {
-      headers: { ...authHeaders() },
-    }
-  );
-  return parse(res);
-}
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch(`/api/admin/${collection}${suffix}`);
+};
 
-export async function adminGetOne(collection, id, { expand } = {}) {
+// ✅ FIX: server.js defines /api/admin/options/:collection
+export const adminOptions = (collection, params = {}) => {
   const qs = new URLSearchParams();
-  if (expand) qs.set("expand", expand);
-
-  const res = await fetch(
-    `${API_BASE}/api/admin/${collection}/${id}?${qs.toString()}`,
-    {
-      headers: { ...authHeaders() },
-    }
-  );
-  return parse(res);
-}
-
-export async function adminCreate(collection, data) {
-  const res = await fetch(`${API_BASE}/api/admin/${collection}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(data || {}),
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v == null) return;
+    const s = String(v);
+    if (!s) return;
+    qs.set(k, s);
   });
-  return parse(res);
-}
 
-export async function adminUpdate(collection, id, data) {
-  const res = await fetch(`${API_BASE}/api/admin/${collection}/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(data || {}),
-  });
-  return parse(res);
-}
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch(`/api/admin/options/${collection}${suffix}`);
+};
 
-export async function adminDelete(collection, id) {
-  const res = await fetch(`${API_BASE}/api/admin/${collection}/${id}`, {
-    method: "DELETE",
-    headers: { ...authHeaders() },
-  });
-  return parse(res);
-}
+// ✅ If FormData is passed for team_members, use multipart endpoints
+export const adminCreate = (collection, body) => {
+  if (collection === "team_members" && isFormData(body)) {
+    return apiFetch(`/api/admin/team_members/multipart`, {
+      method: "POST",
+      body,
+    });
+  }
+  return apiFetch(`/api/admin/${collection}`, { method: "POST", body });
+};
 
-export async function adminOptions(
-  collection,
-  { display = "name", sort = "name,label" } = {}
-) {
-  const qs = new URLSearchParams();
-  qs.set("display", display);
-  qs.set("sort", sort);
+export const adminUpdate = (collection, id, body) => {
+  if (collection === "team_members" && isFormData(body)) {
+    return apiFetch(`/api/admin/team_members/${id}/multipart`, {
+      method: "PATCH",
+      body,
+    });
+  }
+  return apiFetch(`/api/admin/${collection}/${id}`, { method: "PATCH", body });
+};
 
-  const res = await fetch(
-    `${API_BASE}/api/admin/options/${collection}?${qs.toString()}`,
-    {
-      headers: { ...authHeaders() },
-    }
-  );
-  return parse(res);
-}
+export const adminDelete = (collection, id) =>
+  apiFetch(`/api/admin/${collection}/${id}`, { method: "DELETE" });
