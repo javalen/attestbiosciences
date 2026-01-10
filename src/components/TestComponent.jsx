@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Routes, Route, useNavigate, useParams, Link } from "react-router-dom";
-import PocketBase from "pocketbase";
 import {
   ArrowRight,
   ChevronLeft,
@@ -10,7 +9,12 @@ import {
   Loader2,
   XCircle,
 } from "lucide-react";
+
 import pb from "@/db/pocketbase";
+
+// ✅ new data layer
+import { fetchCategories } from "@/data/categories";
+import { fetchTests, fetchTestById } from "@/data/tests";
 
 /** Utils **/
 const formatUSD = (val) => {
@@ -38,15 +42,7 @@ const getCat = (rec, key = "cat_id") => {
 
 const getCatName = (rec) => getCat(rec)?.name || "Uncategorized";
 
-const isAvailable = (rec) => rec?.available !== false; // default to available if field missing
-
-async function fetchAllCategories() {
-  try {
-    return await pb.collection("test_category").getFullList({ sort: "+name" });
-  } catch (e1) {
-    console.log("Error", e1);
-  }
-}
+const isAvailable = (rec) => rec?.available !== false;
 
 // Get a category id from a test record (supports single or M2M)
 function getCatIdFromTest(t, key = "cat_id") {
@@ -64,7 +60,7 @@ function getCatIdFromTest(t, key = "cat_id") {
  */
 export function TestsIndex() {
   const [tests, setTests] = useState([]);
-  const [categories, setCategories] = useState([]); // all cats from PB
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
@@ -77,18 +73,13 @@ export function TestsIndex() {
         setError("");
 
         const [cats, testsRes] = await Promise.all([
-          fetchAllCategories(),
-          pb.collection("test").getList(1, 500, {
-            // ✅ only top-level tests that should be shown
-            filter: "top_level_test = true && show = true",
-            sort: "+name",
-            expand: "cat_id, included_test",
-          }),
+          fetchCategories(),
+          fetchTests(),
         ]);
 
         if (cancelled) return;
         setCategories(cats || []);
-        setTests(testsRes?.items ?? []);
+        setTests(testsRes || []);
       } catch (e) {
         if (!cancelled)
           setError(e?.message || "Failed to load categories/tests");
@@ -101,7 +92,7 @@ export function TestsIndex() {
     };
   }, []);
 
-  // Filter tests by search (the list is already limited to show=true on the server)
+  // Filter tests by search
   const filteredTests = useMemo(() => {
     if (!q) return tests;
     const term = q.toLowerCase();
@@ -123,7 +114,7 @@ export function TestsIndex() {
     return m;
   }, [filteredTests]);
 
-  // ✅ Only show categories that actually have tests after all filters
+  // Only show categories that actually have tests after filters
   const visibleCategories = useMemo(() => {
     return (categories || []).filter(
       (cat) => (testsByCat.get(cat.id) || []).length > 0
@@ -245,7 +236,7 @@ export function TestsIndex() {
             );
           })}
 
-          {/* Only render Uncategorized if it actually has visible tests */}
+          {/* Uncategorized */}
           {uncategorized.length > 0 && (
             <details className="group border border-slate-200 rounded-xl bg-white shadow-sm">
               <summary className="flex items-center justify-between gap-3 cursor-pointer select-none px-4 py-3">
@@ -359,6 +350,7 @@ function InfoAccordionSection({ title, text }) {
   );
 }
 
+/* ================= CART (still uses PB auth) ================= */
 async function getOrCreateOpenCart(userId) {
   try {
     return await pb
@@ -431,16 +423,12 @@ export function TestDetail() {
     (async () => {
       try {
         setLoading(true);
-        const rec = await pb.collection("test").getOne(id, {
-          expand: "cat_id, included_test",
-        });
-        // ✅ Block access to hidden tests
-        if (!cancelled) {
-          if (rec?.show !== true) {
-            throw new Error("Test not found");
-          }
-          setItem(rec);
-        }
+        setError("");
+
+        const rec = await fetchTestById(id);
+        if (!rec) throw new Error("Test not found");
+
+        if (!cancelled) setItem(rec);
       } catch (e) {
         if (!cancelled) setError(e?.message || "Not found");
       } finally {
@@ -608,11 +596,13 @@ export function TestDetail() {
             <div className="text-3xl font-extrabold text-sky-900">
               {formatUSD(item.cost)}
             </div>
+
             {!available && (
               <div className="mt-3 text-sm text-amber-800">
                 Currently unavailable.
               </div>
             )}
+
             {addMsg && (
               <div className="mt-3 text-sm text-emerald-700">{addMsg}</div>
             )}
@@ -645,6 +635,7 @@ export function TestDetail() {
                   <>Order unavailable</>
                 )}
               </button>
+
               <a
                 href="#services"
                 className="inline-flex justify-center items-center gap-2 rounded-xl px-4 py-2.5 border border-slate-300 hover:bg-slate-50"

@@ -1,29 +1,72 @@
 import { useEffect, useState } from "react";
 import {
-  FaQuoteLeft,
   FaChevronLeft,
   FaChevronRight,
   FaStar,
+  FaQuoteLeft,
   FaQuoteRight,
 } from "react-icons/fa";
+import { Link } from "react-router-dom";
 import pb from "@/db/pocketbase";
-import { Link, useNavigate } from "react-router-dom";
 
+/* -------------------- Data server helper (fetch) -------------------- */
+const DATA_SERVER_BASE = import.meta.env.VITE_PUBLIC_API_BASE?.replace(
+  /\/+$/,
+  ""
+);
+
+function isAbortError(err) {
+  const name = err?.name || "";
+  const msg = String(err?.message || "");
+  return (
+    name === "AbortError" ||
+    msg.toLowerCase().includes("signal is aborted") ||
+    msg.toLowerCase().includes("aborted")
+  );
+}
+
+async function apiFetch(path, { method = "GET", body, signal, headers } = {}) {
+  if (!DATA_SERVER_BASE) {
+    throw new Error(
+      "Missing DATA SERVER base URL. Set VITE_DATA_SERVER_URL (or VITE_API_URL)."
+    );
+  }
+
+  const h = { ...(headers || {}) };
+
+  if (body && !(body instanceof FormData)) {
+    h["Content-Type"] = "application/json";
+  }
+
+  if (pb?.authStore?.isValid && pb?.authStore?.token) {
+    h.Authorization = `Bearer ${pb.authStore.token}`;
+  }
+
+  const res = await fetch(`${DATA_SERVER_BASE}${path}`, {
+    method,
+    headers: h,
+    body: body
+      ? body instanceof FormData
+        ? body
+        : JSON.stringify(body)
+      : undefined,
+    signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed (${res.status})`);
+  }
+
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+/* ---------------------------- UI helpers ---------------------------- */
 function clampRating(v) {
   const n = Number(v);
   if (Number.isNaN(n)) return 0;
   return Math.max(0, Math.min(5, Math.round(n)));
-}
-
-function getImageUrl(rec) {
-  const img = rec?.image;
-  if (!img) return `https://i.pravatar.cc/160?u=${rec?.id || "anon"}`;
-  if (typeof img === "string" && /^https?:\/\//i.test(img)) return img; // external URL
-  try {
-    return pb.files.getUrl(rec, img); // PB file field
-  } catch {
-    return `https://i.pravatar.cc/160?u=${rec?.id || "anon"}`;
-  }
 }
 
 const Testimonials = () => {
@@ -33,41 +76,44 @@ const Testimonials = () => {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
+    let alive = true; // protects against setState after unmount
+
     (async () => {
       try {
         setLoading(true);
         setErr("");
-        // Pull up to 50; sort newest first (adjust to your preference)
-        const res = await pb.collection("testimonial").getList(1, 50, {
-          sort: "-created",
-          filter: "show=true",
-          // If you add a published flag, enable a filter like:
-          // filter: 'published = true'
+
+        const data = await apiFetch("/testimonials?limit=50", {
+          signal: ac.signal,
         });
 
-        // Normalize records to the shape the UI expects
-        const rows = (res?.items || []).map((r) => ({
+        if (!alive) return;
+
+        const rows = (data?.items || []).map((r) => ({
           id: r.id,
-          name: r.name || r.full_name || "Anonymous",
+          name: r.name || "Anonymous",
           role: r.role || "Patient",
-          content: r.content || r.text || "",
+          content: r.content || "",
           rating: clampRating(r.rating),
-          image: getImageUrl(r),
+          image: r.image || `https://i.pravatar.cc/160?u=${r.id || "anon"}`,
         }));
 
-        if (!cancelled) {
-          setItems(rows);
-          setCurrentIndex(0);
-        }
+        setItems(rows);
+        setCurrentIndex(0);
       } catch (e) {
-        if (!cancelled) setErr(e?.message || "Failed to load testimonials.");
+        if (!alive) return;
+        if (isAbortError(e)) return; // ✅ ignore abort noise
+        setErr(e?.message || "Failed to load testimonials.");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!alive) return;
+        setLoading(false);
       }
     })();
+
     return () => {
-      cancelled = true;
+      alive = false;
+      ac.abort(); // ✅ cancels fetch on unmount / StrictMode re-run
     };
   }, []);
 
@@ -102,24 +148,24 @@ const Testimonials = () => {
           </p>
         </div>
 
-        {/* Loading / error / empty states */}
         {loading && (
           <div className="flex justify-center items-center py-10 text-slate-600">
             Loading testimonials…
           </div>
         )}
+
         {!loading && err && (
           <div className="max-w-xl mx-auto mb-8 rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
             {err}
           </div>
         )}
+
         {!loading && !err && items.length === 0 && (
           <div className="flex justify-center items-center py-10 text-slate-600">
             No testimonials yet.
           </div>
         )}
 
-        {/* Carousel */}
         {!loading && !err && items.length > 0 && (
           <div className="relative">
             <div
@@ -144,15 +190,10 @@ const Testimonials = () => {
 
                     <div className="md:w-2/3 md:pl-12">
                       <div className="relative px-6 md:px-10">
-                        {/* Opening Quote */}
                         <FaQuoteLeft className="text-sky-200 text-2xl md:text-3xl absolute -top-3 left-0" />
-
-                        {/* Testimonial Text */}
                         <p className="text-lg text-gray-700 mb-6 relative z-10 text-justify">
                           {testimonial.content}
                         </p>
-
-                        {/* Closing Quote */}
                         <FaQuoteRight className="text-sky-200 text-2xl md:text-3xl absolute -bottom-3 right-0" />
                       </div>
 
@@ -196,7 +237,6 @@ const Testimonials = () => {
               ))}
             </div>
 
-            {/* Mobile Navigation */}
             <div className="flex justify-center mt-8 space-x-4 md:hidden">
               {items.map((_, index) => (
                 <button

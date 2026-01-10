@@ -3,6 +3,50 @@ import { useNavigate, Link } from "react-router-dom";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import pb from "@/db/pocketbase";
 
+/* -------------------- Data server helper (fetch) -------------------- */
+const DATA_SERVER_BASE = import.meta.env.VITE_PUBLIC_API_BASE?.replace(
+  /\/+$/,
+  ""
+);
+
+async function apiFetch(path, { method = "GET", body, signal, headers } = {}) {
+  if (!DATA_SERVER_BASE) {
+    throw new Error(
+      "Missing DATA SERVER base URL. Set VITE_DATA_SERVER_URL (or VITE_API_URL)."
+    );
+  }
+
+  const h = { ...(headers || {}) };
+
+  // Don't set JSON content-type for FormData (browser will set boundary)
+  if (body && !(body instanceof FormData)) {
+    h["Content-Type"] = "application/json";
+  }
+
+  if (pb?.authStore?.isValid && pb?.authStore?.token) {
+    h.Authorization = `Bearer ${pb.authStore.token}`;
+  }
+
+  const res = await fetch(`${DATA_SERVER_BASE}${path}`, {
+    method,
+    headers: h,
+    body: body
+      ? body instanceof FormData
+        ? body
+        : JSON.stringify(body)
+      : undefined,
+    signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed (${res.status})`);
+  }
+
+  if (res.status === 204) return null;
+  return res.json();
+}
+
 function clampRating(v) {
   const n = Number(v);
   if (Number.isNaN(n)) return 5;
@@ -13,7 +57,6 @@ export default function TestimonialNew() {
   const navigate = useNavigate();
   const loggedIn = pb.authStore.isValid && !!pb.authStore.model;
 
-  // redirect to login if not authenticated
   useEffect(() => {
     if (!loggedIn) {
       navigate("/login", { state: { redirectTo: "/testimonials/new" } });
@@ -49,15 +92,14 @@ export default function TestimonialNew() {
       form.append("role", role.trim() || "Patient");
       form.append("rating", String(clampRating(rating)));
       form.append("content", content.trim());
-      if (imageFile) form.append("image", imageFile); // if `image` is a file field
+      if (imageFile) form.append("image", imageFile);
 
-      // If your collection uses a `published` flag, you can default to false:
-      // form.append("published", "false");
-
-      await pb.collection("testimonial").create(form);
+      await apiFetch("/testimonials", {
+        method: "POST",
+        body: form,
+      });
 
       setSuccess("Thanks! Your testimonial has been submitted.");
-      // optional: wait a moment then go back to the carousel
       setTimeout(() => navigate("/#testimonials"), 800);
     } catch (err) {
       setError(err?.message || "Could not submit testimonial.");

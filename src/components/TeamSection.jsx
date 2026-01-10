@@ -1,9 +1,9 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users,
-  Search,
-  ArrowUpDown,
+  ChevronDown,
+  ChevronRight,
   Linkedin,
   Mail,
   Globe,
@@ -19,90 +19,26 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import rion from "../assets/Rion.jpg";
-import antionette from "../assets/dr_an.jpg";
-import marcus from "../assets/marcus.png";
-import alexis from "../assets/alexis.png";
-import board from "../assets/board.png";
 import AdvisoryTeam from "./AdvisoryTeam";
 
-/*
-  TeamSection — Modern, filterable team grid
+// ✅ New data layer import (adjust path if your file differs)
+import { fetchTeams } from "@/data/teams";
 
-  Props:
-    - team?: TeamMember[]  // Optional. If not provided, a demo team renders.
-    - title?: string       // Optional. Title above the grid.
-    - onMemberClick?: (m: TeamMember) => void // Optional callback when clicking “View Profile”.
-
-  TeamMember shape:
-    {
-      id: string | number,
-      name: string,
-      role: string,
-      bio: string,
-      image?: string,
-      tags?: string[],
-      socials?: { linkedin?: string; twitter?: string; website?: string; email?: string }
-    }
-
-  Notes:
-    - Uses Tailwind + shadcn/ui + framer-motion + lucide-react.
-    - Add/remove controls (search, role filter, sort) to fit your app.
-*/
-
-const demoTeam = [
-  {
-    id: 1,
-    name: "Rion Barnes, Esq.",
-    role: "CEO & General Counsel",
-    bio: "Rion Barnes, Esq. is the CEO and General Counsel of Attest BioSciences, bringing a strategic vision and strong legal acumen to the company. With a background working in the legal departments of Fortune 500 and 100 companies, including Morgan Stanley and Univar Solutions, Rion has extensive experience navigating complex legal and corporate matters. As a co-founder, Rion has been instrumental in shaping the company's direction and growth, leveraging their expertise in corporate governance and a commitment to health innovation. Dedicated to making cancer screening more accessible and affordable, Rion leads Attest BioSciences with a focus on strategic growth and impactful legal oversight.",
-    image: rion,
-    tags: ["Legal", "Partnerships", "R&D"],
-    socials: {
-      linkedin: "https://www.linkedin.com/",
-      twitter: "https://twitter.com/",
-      website: "https://example.com",
-      email: "maya@example.com",
-    },
-  },
-  {
-    id: 2,
-    name: "Marcus Hall",
-    role: "Chief of Sales and Marketing",
-    bio: "Marcus Hall is the Chief of Sales and Marketing at Attest BioSciences, where he leads the company's sales strategies and brand outreach. Marcus brings a wealth of experience from his previous executive roles in sales and marketing at Fortune 500 companies, including Coca-Cola and Caterpillar. His background in working with industry giants has equipped him with a deep understanding of market dynamics and consumer engagement. Marcus is dedicated to driving Attest BioSciences' market presence and fostering strong customer relationships, leveraging his expertise to position the company as a leader in at-home cancer screening.",
-    image: marcus,
-    tags: ["Genomics", "Pipelines", "ML"],
-    socials: {
-      linkedin: "https://www.linkedin.com/",
-      website: "https://example.com",
-      email: "jordan@example.com",
-    },
-  },
-  {
-    id: 3,
-    name: "Dr. Antoinette Gaston",
-    role: "COO & Chief Scientific Officer",
-    bio: "Dr. Antoinette Gaston is the COO and Chief Scientific Officer of Attest BioSciences and a co-founder of the company. She holds a Ph.D. in Molecular Biology and an MBA, combining scientific expertise with strong business acumen. With years of experience in clinical laboratory operations, cancer research, and assay development, Dr. Gaston plays a critical role in the scientific advancement of the company. She is passionate about advancing healthcare through innovative solutions and works tirelessly to ensure that Attest BioSciences delivers high-quality, reliable cancer screening tests. Her leadership and scientific expertise are vital to the company's mission of empowering proactive health management and making proactive health management accessible to all.",
-    image: antionette,
-    tags: ["CLIA", "Quality", "Validation"],
-    socials: {
-      linkedin: "https://www.linkedin.com/",
-      email: "amina@example.com",
-    },
-  },
-];
+/**
+ * API expects something like:
+ *  GET /api/public/teams -> { teams: [{ id, title, order, members: [...] }] }
+ *
+ * Member shape expected by this UI:
+ *  {
+ *    id, name, role, bio,
+ *    image | imageUrl,
+ *    tags, socials, order
+ *  }
+ */
 
 function initials(name = "") {
-  const parts = name.split(" ").filter(Boolean);
+  const parts = String(name).split(" ").filter(Boolean);
   return parts
     .slice(0, 2)
     .map((p) => p[0])
@@ -110,9 +46,49 @@ function initials(name = "") {
     .toUpperCase();
 }
 
+// Keep these normalizers because JSON fields might be stringified depending on server/PB
+function safeJson(val, fallback) {
+  if (val == null) return fallback;
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
+  }
+  return val;
+}
+
+function normalizeTags(val) {
+  const parsed = safeJson(val, []);
+  if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+  if (typeof parsed === "string") return [parsed].filter(Boolean);
+  return [];
+}
+
+function normalizeSocials(val) {
+  const parsed = safeJson(val, null);
+  if (!parsed || typeof parsed !== "object") return null;
+
+  const linkedin = parsed.linkedin || parsed.linkedIn || parsed.li;
+  const twitter = parsed.twitter || parsed.x;
+  const website = parsed.website || parsed.web || parsed.url;
+  const email = parsed.email;
+
+  const out = {
+    ...(linkedin ? { linkedin: String(linkedin) } : {}),
+    ...(twitter ? { twitter: String(twitter) } : {}),
+    ...(website ? { website: String(website) } : {}),
+    ...(email ? { email: String(email) } : {}),
+  };
+
+  return Object.keys(out).length ? out : null;
+}
+
 function SocialLinks({ socials }) {
   if (!socials) return null;
   const { linkedin, twitter, website, email } = socials;
+
   return (
     <div className="flex items-center gap-2">
       {linkedin && (
@@ -172,7 +148,6 @@ function SocialLinks({ socials }) {
           size="icon"
           variant="ghost"
           className="hover:scale-105 transition"
-          href={`mailto:${email}`}
         >
           <a href={`mailto:${email}`} aria-label="Email">
             <Mail className="h-4 w-4" />
@@ -184,20 +159,21 @@ function SocialLinks({ socials }) {
 }
 
 function MemberCard({ m, onMemberClick }) {
+  const img = m.imageUrl || m.image || "";
+
   return (
-    <div className="">
+    <div>
       <motion.div
         layout
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -12 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
-        className=""
       >
         <Card className="h-full rounded-2xl border border-border/60 shadow-sm hover:shadow-md transition overflow-hidden">
           <CardHeader className="flex flex-row items-center gap-4">
             <Avatar className="h-14 w-14 ring-2 ring-primary/10">
-              <AvatarImage src={m.image} alt={m.name} />
+              <AvatarImage src={img} alt={m.name} />
               <AvatarFallback>{initials(m.name)}</AvatarFallback>
             </Avatar>
             <div className="min-w-0">
@@ -207,20 +183,27 @@ function MemberCard({ m, onMemberClick }) {
               <p className="text-sm text-muted-foreground truncate">{m.role}</p>
             </div>
           </CardHeader>
+
           <CardContent className="pt-0">
             <p className="text-sm text-muted-foreground leading-relaxed line-clamp-3">
               {m.bio}
             </p>
+
             {Array.isArray(m.tags) && m.tags.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {m.tags.map((t, i) => (
-                  <Badge key={i} variant="secondary" className="rounded-full">
+                  <Badge
+                    key={`${m.id}-tag-${i}`}
+                    variant="secondary"
+                    className="rounded-full"
+                  >
                     {t}
                   </Badge>
                 ))}
               </div>
             )}
           </CardContent>
+
           <CardFooter className="flex items-center justify-between">
             <SocialLinks socials={m.socials} />
             {onMemberClick && (
@@ -239,81 +222,198 @@ function MemberCard({ m, onMemberClick }) {
   );
 }
 
+function TeamAccordion({ label, open, onToggle, children }) {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-white/70 shadow-sm overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-black/[0.03] transition"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {open ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <span className="font-semibold truncate">{label}</span>
+        </div>
+
+        <span className="text-xs text-muted-foreground">
+          {open ? "Hide" : "Show"}
+        </span>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="content"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="px-5 pb-5"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function TeamSection({
-  team = demoTeam,
   title = "Meet the Team",
   onMemberClick,
 }) {
-  const [query, setQuery] = useState("");
-  const [role, setRole] = useState("All");
-  const [sort, setSort] = useState("name-asc");
+  const [teams, setTeams] = useState([]); // [{ id, title, order, members: TeamMember[] }]
+  const [openTeamIds, setOpenTeamIds] = useState(() => new Set());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const roles = useMemo(() => {
-    const all = Array.from(new Set(team.map((t) => t.role))).sort();
-    return ["All", ...all];
-  }, [team]);
+  // ✅ Use new data layer (server API), NOT PocketBase client in browser
+  useEffect(() => {
+    let alive = true;
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let list = team.filter((m) => {
-      const matchesRole = role === "All" || m.role === role;
-      const hay = `${m.name} ${m.role} ${m.bio} ${(m.tags || []).join(
-        " "
-      )}`.toLowerCase();
-      const matchesQuery = q.length === 0 || hay.includes(q);
-      return matchesRole && matchesQuery;
-    });
+    async function load() {
+      setLoading(true);
+      setError("");
 
-    switch (sort) {
-      case "name-desc":
-        list = list.sort((a, b) => a.name.localeCompare(b.name) * -1);
-        break;
-      case "role":
-        list = list.sort((a, b) => a.role.localeCompare(b.role));
-        break;
-      case "name-asc":
-      default:
-        list = list.sort((a, b) => a.name.localeCompare(b.name));
+      try {
+        const apiTeamsRaw = await fetchTeams(); // should return array of teams
+
+        const normalized = (Array.isArray(apiTeamsRaw) ? apiTeamsRaw : [])
+          .map((t) => {
+            const members = (Array.isArray(t.members) ? t.members : [])
+              .map((m) => ({
+                id: m.id,
+                name: m.name || "",
+                role: m.role || "",
+                bio: m.bio || "",
+                // API might return imageUrl; we support both
+                imageUrl: m.imageUrl || m.image || "",
+                tags: normalizeTags(m.tags),
+                socials: normalizeSocials(m.socials),
+                order: Number(m.order ?? 0),
+              }))
+              .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+            return {
+              id: t.id,
+              title: t.title || "Team",
+              order: Number(t.order ?? 0),
+              members,
+            };
+          })
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+        if (!alive) return;
+
+        setTeams(normalized);
+
+        // Optional: auto-open first team
+        if (normalized.length) {
+          setOpenTeamIds((prev) => {
+            if (prev.size) return prev;
+            return new Set([normalized[0].id]);
+          });
+        }
+      } catch (e) {
+        if (!alive) return;
+        setError(e?.message || "Failed to load team data.");
+      } finally {
+        if (!alive) return;
+        setLoading(false);
+      }
     }
 
-    return list;
-  }, [team, query, role, sort]);
+    load();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const totalMembers = useMemo(
+    () => teams.reduce((sum, t) => sum + (t.members?.length || 0), 0),
+    [teams]
+  );
+
+  const toggleTeam = (teamId) => {
+    setOpenTeamIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamId)) next.delete(teamId);
+      else next.add(teamId);
+      return next;
+    });
+  };
 
   return (
-    <section id="team" className="scroll-mt-20 bg-sky-50 py-16 p-10">
+    <section id="team" className="scroll-mt-20 bg-sky-50 py-16 px-6 sm:px-10">
       {/* Header */}
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-primary" />
-            <h2 className="text-xl font-semibold tracking-tight">
-              Executive Team
-            </h2>
-          </div>
+      <div className="mb-8 flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <Users className="h-5 w-5 text-primary" />
+          <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
         </div>
-
-        {/* Controls */}
+        <p className="text-sm text-muted-foreground">
+          {loading
+            ? "Loading…"
+            : `${totalMembers} member${totalMembers === 1 ? "" : "s"}`}
+        </p>
       </div>
 
-      {/* Grid */}
-      <AnimatePresence mode="popLayout">
-        <motion.div
-          layout
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
-        >
-          {filtered.map((m) => (
-            <MemberCard key={m.id} m={m} onMemberClick={onMemberClick} />
-          ))}
-        </motion.div>
-      </AnimatePresence>
+      {/* Loading / Error */}
+      {loading && (
+        <div className="text-sm text-muted-foreground">Loading teams…</div>
+      )}
 
-      {/* Empty state */}
-      {filtered.length === 0 && (
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          No team members match your search.
+      {!loading && error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
         </div>
       )}
-      <AdvisoryTeam />
+
+      {/* Teams (collapsible) */}
+      {!loading && !error && (
+        <div className="space-y-4">
+          {teams.map((t) => {
+            const open = openTeamIds.has(t.id);
+            return (
+              <TeamAccordion
+                key={t.id}
+                label={t.title}
+                open={open}
+                onToggle={() => toggleTeam(t.id)}
+              >
+                {t.members?.length ? (
+                  <AnimatePresence mode="popLayout">
+                    <motion.div
+                      layout
+                      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
+                    >
+                      {t.members.map((m) => (
+                        <MemberCard
+                          key={m.id}
+                          m={m}
+                          onMemberClick={onMemberClick}
+                        />
+                      ))}
+                    </motion.div>
+                  </AnimatePresence>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    No members found for this team.
+                  </div>
+                )}
+              </TeamAccordion>
+            );
+          })}
+
+          {teams.length === 0 && (
+            <div className="text-sm text-muted-foreground">No teams found.</div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

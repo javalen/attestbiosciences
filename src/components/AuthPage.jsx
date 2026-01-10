@@ -9,47 +9,66 @@ import {
   AlertCircle,
 } from "lucide-react";
 import pb from "@/db/pocketbase";
-const API_KEY = import.meta.env.VITE_PUBLIC_GOOGLE_PLACES_API;
 import PlacesAddressInput from "@/components/PlacesAddressInput";
 
 /**
- * AuthPage.jsx
- * - Sign In / Create Account tabs for PocketBase auth collection: `ws_users`
- * - On success, queries `cart` where user = currentUser.id AND status = "open"
- * - Shows number of tests in the user's open cart (relation field `test`)
+ * AuthPage.jsx (API SERVER VERSION)
+ * - Uses Express API server for auth + cart count
+ * - Saves returned PB token/model into pb.authStore so the rest of the app keeps working
  *
- * Assumptions:
- * - `ws_users` is an auth collection with email/password fields +
- *   fname, lname, phone, address(JSON)
- * - `cart` has fields: user (relation to ws_users), status (string), test (relation to test; can be single or multiple)
+ * Required env:
+ * - VITE_PUBLIC_API_BASE (e.g. http://localhost:8080)
  */
+
+const API_URL = String(import.meta.env.VITE_PUBLIC_API_BASE || "").replace(
+  /\/+$/,
+  ""
+);
 
 function classNames(...c) {
   return c.filter(Boolean).join(" ");
 }
 
-function countTestsInCart(cart) {
-  if (!cart) return 0;
-  const t = cart.test;
-  const te = cart.expand?.test;
-  if (Array.isArray(t)) return t.length;
-  if (Array.isArray(te)) return te.length;
-  if (t || te) return 1;
-  return 0;
+async function apiFetch(path, { method = "GET", body, token } = {}) {
+  if (!API_URL) throw new Error("Missing VITE_PUBLIC_API_BASE");
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  // try to parse JSON error payloads cleanly
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // ignore
+  }
+
+  if (!res.ok) {
+    const msg =
+      json?.error || json?.message || `Request failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.payload = json;
+    throw err;
+  }
+
+  return json ?? {};
 }
 
-async function fetchOpenCartCount(userId) {
+async function fetchOpenCartCountViaApi() {
   try {
-    const cart = await pb.collection("cart").getFirstListItem(
-      pb.filter(`user = {:uid} && status = {:st}`, {
-        uid: userId,
-        st: "open",
-      }),
-      { expand: "test" }
-    );
-    return countTestsInCart(cart);
-  } catch (e) {
-    // 404 when none
+    const token = pb.authStore?.token;
+    if (!token) return 0;
+
+    const res = await apiFetch("/api/cart/open-count", { token });
+    return Number(res?.count || 0) || 0;
+  } catch {
     return 0;
   }
 }
@@ -70,20 +89,19 @@ export default function AuthPage() {
   const [fname, setFname] = useState("");
   const [lname, setLname] = useState("");
   const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState(""); // keep as JSON string; integrate Places later
   const [addressObj, setAddressObj] = useState(null);
 
   const loggedIn = pb.authStore.isValid && !!pb.authStore.model;
+
   const displayName = useMemo(() => {
     const u = pb.authStore.model || {};
     return u.name || u.username || u.email || "Account";
-  }, [pb.authStore.model, loggedIn]);
+  }, [loggedIn]);
 
   useEffect(() => {
-    // If already logged in, show cart count
     (async () => {
       if (!loggedIn) return;
-      const c = await fetchOpenCartCount(pb.authStore.model.id);
+      const c = await fetchOpenCartCountViaApi();
       setCartCount(c);
     })();
   }, [loggedIn]);
@@ -93,24 +111,31 @@ export default function AuthPage() {
     setError("");
     setSuccessMsg("");
     setLoading(true);
+
     try {
-      const auth = await pb
-        .collection("ws_users")
-        .authWithPassword(email.trim(), password);
+      // API server signs in against PB and returns { token, record }
+      const res = await apiFetch("/api/auth/signin", {
+        method: "POST",
+        body: { email: email.trim(), password },
+      });
 
-      // optional: last_sign_in + cart count (don’t block the redirect)
-      const after = Promise.all([
-        pb
-          .collection("ws_users")
-          .update(auth.record.id, { last_sign_in: new Date().toISOString() })
-          .catch(() => {}),
-        fetchOpenCartCount(pb.authStore.model.id)
-          .then(setCartCount)
-          .catch(() => {}),
-      ]);
+      const token = res?.token;
+      const record = res?.record;
 
-      navigate("/tests", { replace: true }); // 👈 redirect now
-      await after; // let background tasks finish
+      if (!token || !record?.id) {
+        throw new Error("Invalid auth response from server.");
+      }
+
+      // ✅ Keep PocketBase client in sync for the rest of your app
+      pb.authStore.save(token, record);
+
+      // optional: cart count (don’t block redirect)
+      const after = fetchOpenCartCountViaApi()
+        .then(setCartCount)
+        .catch(() => {});
+
+      navigate("/tests", { replace: true });
+      await after;
     } catch (err) {
       setError(err?.message || "Failed to sign in.");
     } finally {
@@ -123,32 +148,35 @@ export default function AuthPage() {
     setError("");
     setSuccessMsg("");
     setLoading(true);
+
     try {
-      await pb.collection("ws_users").create({
-        email: email.trim(),
-        password,
-        passwordConfirm: password,
-        fname: fname.trim(),
-        lname: lname.trim(),
-        phone: phone.trim(),
-        address: addressObj, // store the JSON directly,
+      // API server creates PB user and returns { token, record }
+      const res = await apiFetch("/api/auth/signup", {
+        method: "POST",
+        body: {
+          email: email.trim(),
+          password,
+          fname: fname.trim(),
+          lname: lname.trim(),
+          phone: phone.trim(),
+          address: addressObj || null,
+        },
       });
 
-      const auth = await pb
-        .collection("ws_users")
-        .authWithPassword(email.trim(), password);
+      const token = res?.token;
+      const record = res?.record;
 
-      const after = Promise.all([
-        pb
-          .collection("ws_users")
-          .update(auth.record.id, { last_sign_in: new Date().toISOString() })
-          .catch(() => {}),
-        fetchOpenCartCount(pb.authStore.model.id)
-          .then(setCartCount)
-          .catch(() => {}),
-      ]);
+      if (!token || !record?.id) {
+        throw new Error("Invalid signup response from server.");
+      }
 
-      navigate("/tests", { replace: true }); // 👈 redirect now
+      pb.authStore.save(token, record);
+
+      const after = fetchOpenCartCountViaApi()
+        .then(setCartCount)
+        .catch(() => {});
+
+      navigate("/tests", { replace: true });
       await after;
     } catch (err) {
       setError(err?.message || "Failed to create account.");
@@ -289,6 +317,7 @@ export default function AuthPage() {
                   />
                 </div>
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700">
                   Phone
@@ -299,6 +328,7 @@ export default function AuthPage() {
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
                 />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700">
                   Email
@@ -311,6 +341,7 @@ export default function AuthPage() {
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
                 />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700">
                   Password
@@ -324,6 +355,7 @@ export default function AuthPage() {
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
                 />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700">
                   Address
@@ -337,6 +369,7 @@ export default function AuthPage() {
                   Powered by Google Places.
                 </p>
               </div>
+
               <button
                 disabled={loading}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 text-white px-4 py-2.5 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-300"
@@ -361,10 +394,3 @@ export default function AuthPage() {
     </section>
   );
 }
-
-/**
- * Usage:
- * <Routes>
- *   <Route path="/login" element={<AuthPage />} />
- * </Routes>
- */

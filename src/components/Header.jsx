@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Link, useNavigate, useLocation } from "react-router-dom";
 import {
-  PhoneCall,
   Menu,
   X,
   ShoppingCart,
@@ -15,64 +14,85 @@ import {
 import pb from "@/db/pocketbase";
 import AttestLogo from "@/assets/attest-logo.png";
 
-/* -------------------------- NAV PAGES (PocketBase) -------------------------- */
+/* -------------------------------------------------------------------------- */
+/*                          Data Server helper (fetch)                         */
+/* -------------------------------------------------------------------------- */
+/**
+ * Expected DATA SERVER env var(s):
+ *  - VITE_DATA_SERVER_URL (preferred)
+ *  - VITE_API_URL (fallback)
+ *
+ * Expected endpoints (adjust paths if your server differs):
+ *  - GET    /pages/nav
+ *  - GET    /cart/open?expandTest=1
+ *  - PATCH  /cart/:id   body: { test: [...], last_activity_at: ISOString }
+ */
+const DATA_SERVER_BASE = import.meta.env.VITE_PUBLIC_API_BASE?.replace(
+  /\/+$/,
+  ""
+);
+console.log("Data Server", DATA_SERVER_BASE);
+async function apiFetch(path, { method = "GET", body, signal } = {}) {
+  if (!DATA_SERVER_BASE) {
+    throw new Error(
+      "Missing DATA SERVER base URL. Set VITE_DATA_SERVER_URL (or VITE_API_URL)."
+    );
+  }
+
+  const headers = { "Content-Type": "application/json" };
+
+  // If your data server validates PocketBase JWTs, send it.
+  if (pb?.authStore?.isValid && pb?.authStore?.token) {
+    headers.Authorization = `Bearer ${pb.authStore.token}`;
+  }
+
+  const res = await fetch(`${DATA_SERVER_BASE}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+    signal,
+    //credentials: "include", // ok if your server uses cookies; harmless otherwise
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    // try to surface a useful message
+    throw new Error(text || `Request failed (${res.status})`);
+  }
+
+  // allow empty 204
+  if (res.status === 204) return null;
+
+  return res.json();
+}
+
+/* -------------------------- NAV PAGES (Data server) ------------------------- */
 function useNavPages() {
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const subRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
 
     async function load() {
       setErr("");
       setLoading(true);
       try {
-        // Assumes server-side List Rule handles: published, show_in_nav, time window, roles
-        const list = await pb.collection("pages").getList(1, 200, {
-          sort: "order,label",
-          filter: "published=true && show_in_nav=true",
-        });
-        console.log("List", list);
-        if (!cancelled) setLinks(list?.items || []);
+        // Server should enforce published/show_in_nav rules
+        const data = await apiFetch("/pages/nav", { signal: ac.signal });
+        // accept either {items:[...]} or [...]
+        const items = Array.isArray(data) ? data : data?.items || [];
+        setLinks(items);
       } catch (e) {
-        if (!cancelled) setErr(e?.message || "Failed to load nav links.");
+        setErr(e?.message || "Failed to load nav links.");
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
     }
 
     load();
-
-    // Live-update on any create/update/delete
-    (async () => {
-      try {
-        if (subRef.current) await pb.collection("pages").unsubscribe("*");
-        await pb.collection("pages").subscribe("*", async () => {
-          try {
-            const list = await pb.collection("pages").getList(1, 200, {
-              sort: "order,label",
-              filter: "published=true && show_in_nav=true",
-            });
-            if (!cancelled) setLinks(list?.items || []);
-          } catch {}
-        });
-        subRef.current = "*";
-      } catch {
-        // ignore subscription errors
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      (async () => {
-        try {
-          if (subRef.current) await pb.collection("pages").unsubscribe("*");
-        } catch {}
-        subRef.current = null;
-      })();
-    };
+    return () => ac.abort();
   }, []);
 
   return { links, loading, err };
@@ -91,16 +111,16 @@ function countTestsInCart(cart) {
   return 0;
 }
 
-async function findOpenCart(userId, expand = false) {
+async function findOpenCart(expand = false, signal) {
+  // Data server should infer user from token/cookie and return open cart (or null)
+  // Supports optional expandTest=1 to include test objects.
+  const qs = expand ? "?expandTest=1" : "";
   try {
-    return await pb
-      .collection("cart")
-      .getFirstListItem(
-        `user = "${userId}" && status = "open"`,
-        expand ? { expand: "test" } : {}
-      );
+    return await apiFetch(`/cart/open${qs}`, { signal });
   } catch (e) {
-    if (e?.status === 404) return null;
+    // If your server returns 404 for no open cart, you can treat it as null.
+    // Here we do best-effort parsing from message.
+    if (String(e?.message || "").includes("404")) return null;
     throw e;
   }
 }
@@ -112,58 +132,15 @@ const Header = () => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const loggedIn = pb.authStore.isValid && !!user;
   const displayName = user?.name || user?.username || user?.email || "Account";
 
   const [cartOpen, setCartOpen] = useState(false);
   const [cartCount, setCartCount] = useState(0);
-  const [cartId, setCartId] = useState(null);
-  const subRef = useRef(null);
-  const location = useLocation();
 
   const { links: navLinks, loading: navLoading } = useNavPages();
-
-  // Auth changes → load cart & subscribe to updates for that cart
-  useEffect(() => {
-    let cancelled = false;
-
-    async function setup() {
-      if (subRef.current && cartId) {
-        try {
-          await pb.collection("cart").unsubscribe(cartId);
-        } catch {}
-        subRef.current = null;
-      }
-
-      if (!pb.authStore.isValid || !pb.authStore.model) {
-        setCartCount(0);
-        setCartId(null);
-        return;
-      }
-
-      const u = pb.authStore.model;
-      const cart = await findOpenCart(u.id); // no expand needed for count
-      if (cancelled) return;
-
-      if (cart) {
-        setCartId(cart.id);
-        setCartCount(countTestsInCart(cart));
-        await pb.collection("cart").subscribe(cart.id, (e) => {
-          setCartCount(countTestsInCart(e.record));
-        });
-        subRef.current = cart.id;
-      } else {
-        setCartId(null);
-        setCartCount(0);
-      }
-    }
-
-    setup();
-    return () => {
-      cancelled = true;
-    };
-  }, [pb.authStore.isValid, pb.authStore.model?.id]); // eslint-disable-line
 
   // Keep user state in sync with PB auth changes
   useEffect(() => {
@@ -174,6 +151,28 @@ const Header = () => {
       if (typeof unsub === "function") unsub();
     };
   }, []);
+
+  // Auth changes → load cart count (no realtime subscribe here; data server can add SSE later)
+  useEffect(() => {
+    const ac = new AbortController();
+
+    async function refreshCartCount() {
+      if (!pb.authStore.isValid || !pb.authStore.model) {
+        setCartCount(0);
+        return;
+      }
+      try {
+        const cart = await findOpenCart(false, ac.signal);
+        setCartCount(countTestsInCart(cart));
+      } catch {
+        // keep quiet; don't block header
+        setCartCount(0);
+      }
+    }
+
+    refreshCartCount();
+    return () => ac.abort();
+  }, [pb.authStore.isValid, pb.authStore.model?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close user menu on outside click
   useEffect(() => {
@@ -190,6 +189,7 @@ const Header = () => {
   async function handleSignOut() {
     pb.authStore.clear();
     setIsUserMenuOpen(false);
+    setCartCount(0);
     navigate("/");
   }
 
@@ -463,7 +463,18 @@ const Header = () => {
         </div>
       )}
 
-      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
+      <CartDrawer
+        open={cartOpen}
+        onClose={() => {
+          setCartOpen(false);
+          // refresh cart count when drawer closes (e.g., after removals)
+          if (pb.authStore.isValid) {
+            findOpenCart(false)
+              .then((c) => setCartCount(countTestsInCart(c)))
+              .catch(() => setCartCount(0));
+          }
+        }}
+      />
     </header>
   );
 };
@@ -502,7 +513,8 @@ function CartDrawer({ open, onClose }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
+
     (async () => {
       if (!open) return;
       setError("");
@@ -512,19 +524,18 @@ function CartDrawer({ open, onClose }) {
           navigate("/login");
           return;
         }
-        const u = pb.authStore.model.id;
-        const c = await findOpenCart(u, true /* expand */);
-        if (!cancelled) setCart(c);
+
+        const c = await findOpenCart(true /* expand */, ac.signal);
+        setCart(c);
       } catch (e) {
-        if (!cancelled) setError(e?.message || "Failed to load cart.");
+        setError(e?.message || "Failed to load cart.");
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open]); // eslint-disable-line
+
+    return () => ac.abort();
+  }, [open, navigate]);
 
   const tests = cart?.expand?.test ?? [];
   const subtotalCents = tests.reduce((sum, t) => sum + cents(t.cost), 0);
@@ -532,6 +543,17 @@ function CartDrawer({ open, onClose }) {
   const taxCents = 0;
   const shippingCents = 0;
   const totalCents = subtotalCents - discountCents + taxCents + shippingCents;
+
+  async function updateCartTests(nextTestIds) {
+    if (!cart) return null;
+    return apiFetch(`/cart/${cart.id}`, {
+      method: "PATCH",
+      body: {
+        test: nextTestIds,
+        last_activity_at: new Date().toISOString(),
+      },
+    });
+  }
 
   async function removeTest(testId) {
     if (!cart) return;
@@ -543,15 +565,10 @@ function CartDrawer({ open, onClose }) {
         : cart.test
         ? [cart.test]
         : [];
+
       const next = current.filter((id) => id !== testId);
-      const updated = await pb.collection("cart").update(
-        cart.id,
-        {
-          test: next,
-          last_activity_at: new Date().toISOString(),
-        },
-        { expand: "test" }
-      );
+
+      const updated = await updateCartTests(next);
       setCart(updated);
     } catch (e) {
       setError(e?.message || "Could not remove item.");
@@ -565,14 +582,7 @@ function CartDrawer({ open, onClose }) {
     setLoading(true);
     setError("");
     try {
-      const updated = await pb.collection("cart").update(
-        cart.id,
-        {
-          test: [],
-          last_activity_at: new Date().toISOString(),
-        },
-        { expand: "test" }
-      );
+      const updated = await updateCartTests([]);
       setCart(updated);
     } catch (e) {
       setError(e?.message || "Could not clear cart.");
@@ -652,6 +662,7 @@ function CartDrawer({ open, onClose }) {
                   onClick={() => removeTest(t.id)}
                   className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm hover:bg-slate-50"
                   title="Remove"
+                  disabled={loading}
                 >
                   <Trash2 className="w-4 h-4" /> Remove
                 </button>

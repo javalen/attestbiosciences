@@ -1,3 +1,9 @@
+// AdminPanel.jsx (DROP-IN)
+// ✅ Teams CRUD
+// ✅ Team Members are created from Teams via "Add User" (no left-nav link)
+// ✅ When a member is created, it is immediately added to teams.members (or teams.team_menbers)
+// ✅ Uses your server-backed adminApi helpers
+
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -9,6 +15,15 @@ import {
   Search,
 } from "lucide-react";
 import pb from "@/db/pocketbase";
+
+import {
+  adminMe,
+  adminList,
+  adminCreate,
+  adminUpdate,
+  adminDelete,
+  adminOptions,
+} from "@/data/adminApi";
 
 /* ---------- Utilities ---------- */
 const formatUSD = (val) => {
@@ -29,7 +44,6 @@ const toDatetimeLocal = (iso) => {
   if (!iso) return "";
   try {
     const d = new Date(iso);
-    // Pad helper
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(
       d.getHours()
@@ -40,10 +54,8 @@ const toDatetimeLocal = (iso) => {
 };
 
 const fromDatetimeLocal = (val) => {
-  // empty → ""
   if (!val) return "";
   try {
-    // treat input as local time and convert to ISO string
     const d = new Date(val);
     return d.toISOString();
   } catch {
@@ -51,19 +63,63 @@ const fromDatetimeLocal = (val) => {
   }
 };
 
+function safeJson(val, fallback) {
+  if (val == null) return fallback;
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
+  }
+  return val;
+}
+function normalizeJsonArray(val) {
+  const parsed = safeJson(val, []);
+  if (Array.isArray(parsed)) return parsed;
+  if (typeof parsed === "string" && parsed) return [parsed];
+  return [];
+}
+function normalizeJsonObject(val) {
+  const parsed = safeJson(val, {});
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+    return parsed;
+  return {};
+}
+
 /* ---------- Menu ---------- */
 const MENU = [
-  { key: "pages", label: "Pages" }, // ✅ NEW
+  { key: "pages", label: "Pages" },
   { key: "ws_users", label: "Users" },
+  { key: "teams", label: "Teams" },
   { key: "test", label: "Tests" },
   { key: "test_category", label: "Test Categories" },
   { key: "cart", label: "Carts" },
   { key: "testimonial", label: "Testimonials" },
 ];
 
+/**
+ * Some PB projects have a typo for members field (e.g. team_menbers).
+ * We’ll support both by expanding both and auto-detecting which one exists.
+ */
+const MEMBERS_FIELD_CANDIDATES = ["members", "team_menbers"];
+
+function pickMembersFieldFromRecord(r) {
+  if (!r) return MEMBERS_FIELD_CANDIDATES[0];
+
+  // Prefer a field that exists on the record (ids array)
+  for (const k of MEMBERS_FIELD_CANDIDATES) {
+    if (Array.isArray(r?.[k])) return k;
+  }
+  // Prefer a field that exists in expand
+  for (const k of MEMBERS_FIELD_CANDIDATES) {
+    if (Array.isArray(r?.expand?.[k])) return k;
+  }
+  return MEMBERS_FIELD_CANDIDATES[0];
+}
+
 /* ---------- Field configuration ---------- */
 const FIELD_CONFIG = {
-  /* ====== NEW: pages collection config ====== */
   pages: {
     listColumns: [
       { key: "label", header: "Label" },
@@ -126,17 +182,9 @@ const FIELD_CONFIG = {
       { key: "show_in_footer", label: "Show in Footer", type: "checkbox" },
       { key: "start_at", label: "Start At", type: "datetime" },
       { key: "end_at", label: "End At", type: "datetime" },
-      // {
-      //   key: "parent",
-      //   label: "Parent (for dropdowns)",
-      //   type: "relation",
-      //   collection: "pages",
-      //   display: "label",
-      // },
       { key: "icon_name", label: "Icon Name (optional)", type: "text" },
       { key: "feature_flag", label: "Feature Flag (optional)", type: "text" },
     ],
-    // sort override for list fetch:
     sort: "order,label",
   },
 
@@ -164,6 +212,53 @@ const FIELD_CONFIG = {
     ],
   },
 
+  /* ✅ Teams */
+  teams: {
+    listColumns: [
+      { key: "title", header: "Title" },
+      { key: "order", header: "Order" },
+      {
+        key: "members_count",
+        header: "Members",
+        render: (r) => {
+          const k = pickMembersFieldFromRecord(r);
+          const expanded = r?.expand?.[k];
+          if (Array.isArray(expanded)) return `${expanded.length}`;
+          if (Array.isArray(r?.[k])) return `${r[k].length}`;
+          return "0";
+        },
+      },
+      { key: "updated", header: "Updated" },
+    ],
+    formFields: [
+      { key: "title", label: "Title", type: "text" },
+      { key: "order", label: "Order", type: "number" },
+
+      // keep a single config slot, but we’ll read/write whichever key exists
+      {
+        key: "members",
+        label: "Members",
+        type: "multirelation",
+        collection: "team_members",
+        display: "name",
+      },
+    ],
+    sort: "order,title",
+  },
+
+  /* (Hidden) team_members config used by Add User modal */
+  team_members: {
+    formFields: [
+      { key: "name", label: "Name", type: "text" },
+      { key: "role", label: "Role", type: "text" },
+      { key: "bio", label: "Bio", type: "textarea" },
+      { key: "image", label: "Image (url/filename)", type: "text" },
+      { key: "tags", label: "Tags (JSON array)", type: "json" },
+      { key: "socials", label: "Socials (JSON object)", type: "json" },
+      { key: "order", label: "Order", type: "number" },
+    ],
+  },
+
   test_category: {
     listColumns: [
       { key: "name", header: "Name" },
@@ -174,22 +269,14 @@ const FIELD_CONFIG = {
 
   test: {
     listColumns: [
-      {
-        key: "show",
-        header: "Show",
-        render: (r) => (r?.show ? "Yes" : "No"),
-      },
+      { key: "show", header: "Show", render: (r) => (r?.show ? "Yes" : "No") },
       { key: "name", header: "Name" },
       {
         key: "cat_id",
         header: "Category",
         render: (r) => r?.expand?.cat_id?.name ?? "—",
       },
-      {
-        key: "cost",
-        header: "Cost",
-        render: (r) => formatUSD(r?.cost),
-      },
+      { key: "cost", header: "Cost", render: (r) => formatUSD(r?.cost) },
       {
         key: "available",
         header: "Available",
@@ -310,7 +397,7 @@ const FIELD_CONFIG = {
       { key: "role", label: "Role", type: "text" },
       { key: "rating", label: "Rating (1–5)", type: "number" },
       { key: "content", label: "Content", type: "textarea" },
-      { key: "image", label: "Image", type: "file" },
+      { key: "image", label: "Image (filename/url)", type: "text" },
       { key: "show", label: "Show", type: "checkbox" },
       { key: "reviewed", label: "Reviewed", type: "checkbox" },
     ],
@@ -352,15 +439,223 @@ function Textarea(props) {
 
 /* ---------- Helpers ---------- */
 async function fetchOptions(collection, display) {
-  const list = await pb
-    .collection(collection)
-    .getList(1, 500, { sort: "name,label" });
-  return list.items.map((i) => {
-    const path = display.split(".");
-    let label = i;
-    path.forEach((k) => (label = label?.[k]));
-    return { id: i.id, label: label ?? i.id };
+  const res = await adminOptions(collection, { display, sort: "name,label" });
+  return res.options || [];
+}
+
+function JsonEditor({ value, onChange, placeholder }) {
+  const [txt, setTxt] = useState(() => {
+    if (value == null || value === "") return "";
+    try {
+      return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    } catch {
+      return "";
+    }
   });
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (value == null || value === "") {
+      setTxt("");
+      setErr("");
+      return;
+    }
+    try {
+      const next =
+        typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      setTxt(next);
+      setErr("");
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(value)]);
+
+  const commit = (nextTxt) => {
+    setTxt(nextTxt);
+    if (!nextTxt.trim()) {
+      setErr("");
+      onChange("");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(nextTxt);
+      setErr("");
+      onChange(parsed);
+    } catch {
+      setErr("Invalid JSON");
+    }
+  };
+
+  return (
+    <div>
+      <Textarea
+        rows={6}
+        value={txt}
+        placeholder={placeholder}
+        onChange={(e) => commit(e.target.value)}
+      />
+      {err && <div className="mt-1 text-xs text-red-600">{err}</div>}
+    </div>
+  );
+}
+
+/* ---------- Add User (team_member) modal ---------- */
+function AddTeamMemberModal({ open, onClose, onCreated }) {
+  const [inputs, setInputs] = useState({
+    name: "",
+    role: "",
+    bio: "",
+    image: "",
+    tags: [],
+    socials: {},
+    order: "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setInputs({
+      name: "",
+      role: "",
+      bio: "",
+      image: "",
+      tags: [],
+      socials: {},
+      order: "",
+    });
+  }, [open]);
+
+  const handle = (k, v) => setInputs((s) => ({ ...s, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        name: inputs.name ?? "",
+        role: inputs.role ?? "",
+        bio: inputs.bio ?? "",
+        image: inputs.image ?? "",
+        tags: inputs.tags === "" ? "" : inputs.tags,
+        socials: inputs.socials === "" ? "" : inputs.socials,
+        order:
+          inputs.order === "" || inputs.order == null
+            ? ""
+            : Number(inputs.order),
+      };
+
+      const res = await adminCreate("team_members", payload);
+      const created = res?.item;
+      if (created?.id) onCreated?.(created);
+      onClose?.();
+    } catch (e) {
+      alert(e?.message ?? "Failed to create member");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ChevronLeft className="h-5 w-5 cursor-pointer" onClick={onClose} />
+            <h2 className="text-lg font-semibold">Add User</h2>
+          </div>
+          <Button onClick={save} disabled={saving || !inputs.name?.trim()}>
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Pencil className="h-4 w-4" />
+            )}
+            Save
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700">Name</span>
+            <Input
+              value={inputs.name}
+              onChange={(e) => handle("name", e.target.value)}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700">Role</span>
+            <Input
+              value={inputs.role}
+              onChange={(e) => handle("role", e.target.value)}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm md:col-span-2">
+            <span className="font-medium text-slate-700">Bio</span>
+            <Textarea
+              rows={4}
+              value={inputs.bio}
+              onChange={(e) => handle("bio", e.target.value)}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm md:col-span-2">
+            <span className="font-medium text-slate-700">
+              Image (url/filename)
+            </span>
+            <Input
+              value={inputs.image}
+              onChange={(e) => handle("image", e.target.value)}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="font-medium text-slate-700">Order</span>
+            <Input
+              type="number"
+              value={inputs.order}
+              onChange={(e) =>
+                handle(
+                  "order",
+                  e.target.value === "" ? "" : e.target.valueAsNumber
+                )
+              }
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm md:col-span-2">
+            <span className="font-medium text-slate-700">
+              Tags (JSON array)
+            </span>
+            <JsonEditor
+              value={inputs.tags}
+              onChange={(v) => handle("tags", v)}
+              placeholder='["Legal","R&D"]'
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm md:col-span-2">
+            <span className="font-medium text-slate-700">
+              Socials (JSON object)
+            </span>
+            <JsonEditor
+              value={inputs.socials}
+              onChange={(v) => handle("socials", v)}
+              placeholder='{"linkedin":"...","email":"..."}'
+            />
+          </label>
+        </div>
+
+        <div className="mt-5 flex justify-end">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ---------- Add/Edit modal ---------- */
@@ -369,6 +664,11 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
   const [inputs, setInputs] = useState({});
   const [loading, setLoading] = useState(false);
   const [relationsCache, setRelationsCache] = useState({});
+  const [addUserOpen, setAddUserOpen] = useState(false);
+
+  // detect actual members field for this record while editing a team
+  const membersKey =
+    collection === "teams" ? pickMembersFieldFromRecord(inputs || row) : null;
 
   useEffect(() => {
     setInputs(row ?? {});
@@ -376,20 +676,30 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
 
   useEffect(() => {
     (async () => {
-      const relKeys = cfg.formFields.filter(
+      const relKeys = (cfg?.formFields || []).filter(
         (f) => f.type === "relation" || f.type === "multirelation"
       );
+
       const entries = await Promise.all(
         relKeys.map(async (f) => [
           f.key,
           await fetchOptions(f.collection, f.display),
         ])
       );
+
       const map = {};
       entries.forEach(([k, v]) => (map[k] = v));
+
+      // Teams members can be either `members` or `team_menbers`; cache options under both keys
+      if (collection === "teams") {
+        const opts = await fetchOptions("team_members", "name");
+        for (const k of MEMBERS_FIELD_CANDIDATES) map[k] = opts;
+      }
+
       setRelationsCache(map);
     })();
-  }, [collection, open]); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collection, open]);
 
   const handleChange = (key, val) => setInputs((s) => ({ ...s, [key]: val }));
 
@@ -411,85 +721,72 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
     setInputs((s) => ({ ...s, [key]: next }));
   };
 
+  const refreshTeamMemberOptions = async () => {
+    const opts = await fetchOptions("team_members", "name");
+    setRelationsCache((s) => {
+      const next = { ...s };
+      for (const k of MEMBERS_FIELD_CANDIDATES) next[k] = opts;
+      return next;
+    });
+    return opts;
+  };
+
+  const attachMemberToTeamNow = async (memberId) => {
+    const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
+    const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
+    const next = curr.includes(memberId) ? curr : [...curr, memberId];
+
+    // update local UI immediately
+    handleChange(key, next);
+
+    // persist immediately if editing existing team
+    if (collection === "teams" && row?.id) {
+      await adminUpdate("teams", row.id, { [key]: next });
+      onSaved?.();
+    }
+  };
+
   const save = async () => {
     setLoading(true);
     try {
-      const formData = new FormData();
+      const payload = {};
 
       for (const f of cfg.formFields) {
+        // Special-case: teams "Members" field - write to detected key
+        if (
+          collection === "teams" &&
+          f.type === "multirelation" &&
+          f.collection === "team_members"
+        ) {
+          const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
+          const v = inputs?.[key] ?? inputs?.[f.key];
+          payload[key] = Array.isArray(v) ? v : [];
+          continue;
+        }
+
         let v = inputs[f.key];
 
-        // validation hint: pages must have either path or external_url (not both)
-        if (collection === "pages") {
-          if (f.key === "path" && v && inputs.external_url) {
-            // prefer whatever admin entered last; no hard stop
-          }
-          if (f.key === "external_url" && v && inputs.path) {
-            // same as above
-          }
-        }
-
-        if (f.type === "file") {
-          if (v instanceof File) formData.append(f.key, v);
-          continue;
-        }
-
-        if (f.type === "checkbox") {
-          formData.append(f.key, v ? "true" : "false");
-          continue;
-        }
-
-        if (f.type === "multirelation") {
-          const arr = Array.isArray(v) ? v.filter(Boolean) : [];
-          if (arr.length) {
-            arr.forEach((id) => formData.append(f.key, id));
-          } else {
-            formData.append(f.key, "");
-          }
-          continue;
-        }
-
-        if (f.type === "relation") {
-          formData.append(f.key, v ?? "");
-          continue;
-        }
-
-        if (f.type === "multiselect") {
-          const arr = Array.isArray(v) ? v.filter(Boolean) : [];
-          if (arr.length) {
-            arr.forEach((val) => formData.append(f.key, val));
-          } else {
-            formData.append(f.key, "");
-          }
-          continue;
-        }
-
-        if (f.type === "datetime") {
-          // convert local value to ISO before sending
-          formData.append(f.key, v ? fromDatetimeLocal(v) : "");
-          continue;
-        }
-
-        if (f.type === "number") {
-          // allow empty => "", else numeric
-          if (v === "" || v === null || Number.isNaN(v)) {
-            formData.append(f.key, "");
-          } else {
-            formData.append(f.key, String(v));
-          }
-          continue;
-        }
-
-        // Plain fields
-        formData.append(f.key, v ?? "");
+        if (f.type === "checkbox") payload[f.key] = !!v;
+        else if (f.type === "datetime")
+          payload[f.key] = v ? fromDatetimeLocal(v) : "";
+        else if (f.type === "number")
+          payload[f.key] = v === "" || v == null ? "" : v;
+        else if (f.type === "relation") payload[f.key] = v ?? "";
+        else if (f.type === "multirelation")
+          payload[f.key] = Array.isArray(v) ? v : [];
+        else if (f.type === "multiselect")
+          payload[f.key] = Array.isArray(v) ? v : [];
+        else if (f.type === "json")
+          payload[f.key] = v === "" || v == null ? "" : v;
+        else payload[f.key] = v ?? "";
       }
 
-      const coll = pb.collection(collection);
       const saved = row?.id
-        ? await coll.update(row.id, formData)
-        : await coll.create(formData);
-      onSaved(saved);
-      onClose();
+        ? await adminUpdate(collection, row.id, payload)
+        : await adminCreate(collection, payload);
+
+      onSaved?.(saved?.item);
+      onClose?.();
     } catch (e) {
       alert(e?.message ?? "Save failed");
     } finally {
@@ -522,13 +819,9 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {cfg.formFields.map((f) => {
             let v = inputs?.[f.key];
+            if (f.type === "datetime") v = toDatetimeLocal(v);
 
-            // Coerce datetime field value to datetime-local for UI
-            if (f.type === "datetime") {
-              v = toDatetimeLocal(v);
-            }
-
-            // Custom: Included Tests table (unchanged from your code)
+            // existing special-case: included tests selector
             if (collection === "test" && f.key === "included_test") {
               const showBlock = !!inputs?.top_level_test;
               return (
@@ -586,6 +879,86 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
               );
             }
 
+            // ✅ Teams Members block with "Add User" (auto-detect members key)
+            if (
+              collection === "teams" &&
+              f.type === "multirelation" &&
+              f.collection === "team_members"
+            ) {
+              const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
+              const opts = relationsCache[key] || [];
+              const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
+
+              return (
+                <div key={f.key} className="md:col-span-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-sm font-medium text-slate-700">
+                      {f.label}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setAddUserOpen(true)}
+                      className="border border-slate-200"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add User
+                    </Button>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 p-2">
+                    <div className="flex flex-wrap gap-2">
+                      {opts.map((o) => {
+                        const checked = curr.includes(o.id);
+                        return (
+                          <label
+                            key={o.id}
+                            className={`flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${
+                              checked
+                                ? "border-slate-900 bg-slate-50"
+                                : "border-slate-200"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                const next = checked
+                                  ? curr.filter((x) => x !== o.id)
+                                  : [...curr, o.id];
+                                handleChange(key, next);
+                              }}
+                            />
+                            <span>{o.label}</span>
+                          </label>
+                        );
+                      })}
+
+                      {opts.length === 0 && (
+                        <div className="text-xs text-slate-500">
+                          No users found yet. Click <b>Add User</b> to create
+                          one.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-1 text-xs text-slate-500">
+                    Using team field: <b>{key}</b>
+                  </div>
+
+                  <AddTeamMemberModal
+                    open={addUserOpen}
+                    onClose={() => setAddUserOpen(false)}
+                    onCreated={async (created) => {
+                      await refreshTeamMemberOptions();
+                      await attachMemberToTeamNow(created.id);
+                    }}
+                  />
+                </div>
+              );
+            }
+
             return (
               <label key={f.key} className="flex flex-col gap-1 text-sm">
                 <span className="font-medium text-slate-700">{f.label}</span>
@@ -626,15 +999,6 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                       onChange={(e) => handleChange(f.key, e.target.checked)}
                     />
                   </div>
-                )}
-
-                {f.type === "file" && (
-                  <Input
-                    type="file"
-                    onChange={(e) =>
-                      handleChange(f.key, e.target.files?.[0] ?? null)
-                    }
-                  />
                 )}
 
                 {f.type === "select" && (
@@ -699,6 +1063,18 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                     onChange={(e) => handleChange(f.key, e.target.value)}
                   />
                 )}
+
+                {f.type === "json" && (
+                  <JsonEditor
+                    value={inputs?.[f.key]}
+                    onChange={(parsed) => handleChange(f.key, parsed)}
+                    placeholder={
+                      f.key === "tags"
+                        ? '["Legal","R&D"]'
+                        : '{"linkedin":"...","email":"..."}'
+                    }
+                  />
+                )}
               </label>
             );
           })}
@@ -733,6 +1109,7 @@ function CollectionView({ collection }) {
     if (c === "cart") return `status ~ "${query}"`;
     if (c === "pages")
       return `label ~ "${query}" || path ~ "${query}" || external_url ~ "${query}"`;
+    if (c === "teams") return `title ~ "${query}"`;
     return "";
   };
 
@@ -746,17 +1123,22 @@ function CollectionView({ collection }) {
           ? "user,test"
           : collection === "pages"
           ? "parent"
+          : collection === "teams"
+          ? MEMBERS_FIELD_CANDIDATES.join(",") // ✅ expand BOTH: "members,team_menbers"
           : undefined;
 
       const sort =
         cfg?.sort ?? (collection === "pages" ? "order,label" : "-updated");
 
-      const res = await pb.collection(collection).getList(pageNo, 100, {
+      const res = await adminList(collection, {
+        page: pageNo,
+        perPage: 100,
         sort,
         filter: buildFilter(collection, q),
         expand,
       });
-      setItems(res.items);
+
+      setItems(res.items || []);
       setPage(pageNo);
     } finally {
       setLoading(false);
@@ -779,7 +1161,7 @@ function CollectionView({ collection }) {
   const remove = async (row) => {
     const ok = window.confirm(`Delete this ${collection} record?`);
     if (!ok) return;
-    await pb.collection(collection).delete(row.id);
+    await adminDelete(collection, row.id);
     await load(page);
   };
 
@@ -810,7 +1192,6 @@ function CollectionView({ collection }) {
         </Button>
       </div>
 
-      {/* Scrollable table with sticky header */}
       <div className="rounded-xl border border-slate-200 overflow-hidden">
         <div className="max-h-[60vh] overflow-y-auto">
           <table className="min-w-full divide-y divide-slate-200">
@@ -856,9 +1237,7 @@ function CollectionView({ collection }) {
                     ))}
                     <td
                       className="px-3 py-2"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                      }}
+                      onClick={(e) => e.stopPropagation()}
                     >
                       <button
                         className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
@@ -899,23 +1278,18 @@ function CollectionView({ collection }) {
 
 /* ---------- Main Admin Panel ---------- */
 const AdminPanel = () => {
-  const [active, setActive] = useState("pages"); // ✅ default to pages first
+  const [active, setActive] = useState("pages");
   const [ready, setReady] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
     const run = async () => {
       try {
-        const authModel = pb.authStore.model;
-        if (!authModel?.id) {
+        if (!pb.authStore?.isValid || !pb.authStore?.token) {
           navigate("/auth");
           return;
         }
-        const me = await pb.collection("ws_users").getOne(authModel.id);
-        if (!me?.isAdmin) {
-          navigate("/auth");
-          return;
-        }
+        await adminMe();
         setReady(true);
       } catch {
         navigate("/auth");
