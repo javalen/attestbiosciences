@@ -1062,6 +1062,9 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
 /* ============================================================================
    Generic Edit Modal (CRUD)
 ============================================================================ */
+/* ============================================================================
+   Generic Edit Modal (CRUD)  ✅ UPDATED: adds Delete for Teams
+============================================================================ */
 function EditModal({ open, onClose, collection, row, onSaved }) {
   const cfg = FIELD_CONFIG[collection];
   const [inputs, setInputs] = useState({});
@@ -1071,6 +1074,8 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
   const [addUserOpen, setAddUserOpen] = useState(false);
   const [memberEditOpen, setMemberEditOpen] = useState(false);
   const [memberToEdit, setMemberToEdit] = useState(null);
+
+  const [deleting, setDeleting] = useState(false);
 
   const membersKey =
     collection === "teams" ? pickMembersFieldFromRecord(inputs || row) : null;
@@ -1166,7 +1171,6 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
     );
 
     if (!hasFile) {
-      // normal JSON payload
       const payload = {};
       for (const f of cfg.formFields) {
         let v = inputs[f.key];
@@ -1187,7 +1191,6 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
       return payload;
     }
 
-    // FormData payload for file uploads
     const fd = new FormData();
 
     for (const f of cfg.formFields) {
@@ -1209,7 +1212,6 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
         if (v === "" || v == null) fd.append(f.key, "");
         else fd.append(f.key, typeof v === "string" ? v : JSON.stringify(v));
       } else if (f.type === "file") {
-        // if user selected a File, attach; if not, do nothing (PB keeps existing)
         if (v instanceof File) fd.append(f.key, v);
       } else {
         fd.append(f.key, v ?? "");
@@ -1237,375 +1239,433 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
     }
   };
 
+  // ✅ NEW: Delete Team button handler
+  const deleteTeam = async () => {
+    if (collection !== "teams" || !row?.id) return;
+
+    const label = inputs?.title || row?.title || row?.id;
+    const ok = window.confirm(
+      `Delete team "${label}"?\n\nThis cannot be undone.`
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    try {
+      await adminDelete("teams", row.id);
+      onClose?.();
+      onSaved?.(); // refresh list
+    } catch (e) {
+      alert(e?.message ?? "Failed to delete team");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ChevronLeft className="h-5 w-5 cursor-pointer" onClick={onClose} />
-            <h2 className="text-lg font-semibold">
-              {row?.id ? "Edit" : "Add"} {collection}
-            </h2>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4">
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl border border-slate-200 max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
+        {/* Header (fixed) */}
+        <div className="p-5 pb-3 border-b border-slate-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ChevronLeft
+                className="h-5 w-5 cursor-pointer"
+                onClick={onClose}
+              />
+              <h2 className="text-lg font-semibold">
+                {row?.id ? "Edit" : "Add"} {collection}
+              </h2>
+            </div>
+            <UIButton onClick={save} disabled={loading || deleting}>
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Pencil className="h-4 w-4" />
+              )}
+              Save
+            </UIButton>
           </div>
-          <UIButton onClick={save} disabled={loading}>
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Pencil className="h-4 w-4" />
-            )}
-            Save
-          </UIButton>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {cfg.formFields.map((f) => {
-            {
-              f.type === "file" && (
-                <div className="flex items-center gap-3">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] || null;
-                      handleChange(f.key, file);
-                    }}
-                  />
-                  {inputs?.[f.key] instanceof File && (
-                    <span className="text-xs text-slate-500">
-                      {inputs[f.key].name}
-                    </span>
-                  )}
-                </div>
-              );
-            }
-
-            let v = inputs?.[f.key];
-            if (f.type === "datetime") v = toDatetimeLocal(v);
-
-            // Included tests selector
-            if (collection === "test" && f.key === "included_test") {
-              const showBlock = !!inputs?.top_level_test;
-              return (
-                <div key={f.key} className="md:col-span-2">
-                  <div className="mb-2 text-sm font-medium text-slate-700">
-                    {f.label}
+        {/* Body (scrolls) */}
+        <div className="flex-1 overflow-y-auto p-5 pt-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {cfg.formFields.map((f) => {
+              // ✅ File input (if you ever add file fields to EditModal configs)
+              if (f.type === "file") {
+                return (
+                  <div
+                    key={f.key}
+                    className="md:col-span-2 flex items-center gap-3"
+                  >
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        handleChange(f.key, file);
+                      }}
+                    />
+                    {inputs?.[f.key] instanceof File && (
+                      <span className="text-xs text-slate-500">
+                        {inputs[f.key].name}
+                      </span>
+                    )}
                   </div>
-                  {!showBlock ? (
-                    <div className="text-xs text-slate-500">
-                      Check <b>“Includes Test (Top Level)”</b> to select
-                      included tests.
-                    </div>
-                  ) : (
-                    <div className="overflow-hidden rounded-xl border border-slate-200">
-                      <div className="max-h-64 overflow-y-auto">
-                        <table className="min-w-full divide-y divide-slate-200">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
-                                Test Name
-                              </th>
-                              <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
-                                Included
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 bg-white">
-                            {(relationsCache[f.key] || []).map((opt) => {
-                              const checked = Array.isArray(inputs?.[f.key])
-                                ? inputs[f.key].includes(opt.id)
-                                : false;
-                              const disabled = row?.id && opt.id === row.id;
-                              return (
-                                <tr key={opt.id}>
-                                  <td className="px-3 py-2 text-sm text-slate-700">
-                                    {opt.label}
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    <input
-                                      type="checkbox"
-                                      disabled={disabled}
-                                      checked={checked}
-                                      onChange={() => toggleIncluded(opt.id)}
-                                    />
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            }
+                );
+              }
 
-            // Teams Members block (checkbox list + edit icon + Add User)
-            if (
-              collection === "teams" &&
-              f.type === "multirelation" &&
-              f.collection === "team_members"
-            ) {
-              const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
-              const opts = relationsCache[key] || [];
-              const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
+              let v = inputs?.[f.key];
+              if (f.type === "datetime") v = toDatetimeLocal(v);
 
-              const memberById = (id) => {
-                const expandedArr = Array.isArray(inputs?.expand?.[key])
-                  ? inputs.expand[key]
-                  : Array.isArray(row?.expand?.[key])
-                  ? row.expand[key]
-                  : null;
-                const fromExpand = expandedArr?.find((m) => m?.id === id);
-                if (fromExpand) return fromExpand;
-                const opt = (opts || []).find((o) => o.id === id);
-                return opt ? { id: opt.id, name: opt.label } : { id };
-              };
-
-              return (
-                <div key={f.key} className="md:col-span-2">
-                  <div className="mb-2 flex items-center justify-between">
-                    <div className="text-sm font-medium text-slate-700">
+              // Included tests selector
+              if (collection === "test" && f.key === "included_test") {
+                const showBlock = !!inputs?.top_level_test;
+                return (
+                  <div key={f.key} className="md:col-span-2">
+                    <div className="mb-2 text-sm font-medium text-slate-700">
                       {f.label}
                     </div>
-                    <UIButton
-                      type="button"
-                      variant="ghost"
-                      onClick={() => setAddUserOpen(true)}
-                      className="border border-slate-200"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add User
-                    </UIButton>
+
+                    {!showBlock ? (
+                      <div className="text-xs text-slate-500">
+                        Check <b>“Includes Test (Top Level)”</b> to select
+                        included tests.
+                      </div>
+                    ) : (
+                      <div className="overflow-hidden rounded-xl border border-slate-200">
+                        {/* Keep this inner scroll too, but it now lives inside a scrolling modal body */}
+                        <div className="max-h-64 overflow-y-auto">
+                          <table className="min-w-full divide-y divide-slate-200">
+                            <thead className="bg-slate-50">
+                              <tr>
+                                <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
+                                  Test Name
+                                </th>
+                                <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
+                                  Included
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 bg-white">
+                              {(relationsCache[f.key] || []).map((opt) => {
+                                const checked = Array.isArray(inputs?.[f.key])
+                                  ? inputs[f.key].includes(opt.id)
+                                  : false;
+                                const disabled = row?.id && opt.id === row.id;
+
+                                return (
+                                  <tr key={opt.id}>
+                                    <td className="px-3 py-2 text-sm text-slate-700">
+                                      {opt.label}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <input
+                                        type="checkbox"
+                                        disabled={disabled}
+                                        checked={checked}
+                                        onChange={() => toggleIncluded(opt.id)}
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
+                );
+              }
 
-                  <div className="rounded-lg border border-slate-200 p-2">
-                    <div className="flex flex-wrap gap-2">
-                      {opts.map((o) => {
-                        const checked = curr.includes(o.id);
+              // Teams Members block (unchanged)
+              if (
+                collection === "teams" &&
+                f.type === "multirelation" &&
+                f.collection === "team_members"
+              ) {
+                const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
+                const opts = relationsCache[key] || [];
+                const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
 
-                        return (
-                          <div
-                            key={o.id}
-                            className={`flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${
-                              checked
-                                ? "border-slate-900 bg-slate-50"
-                                : "border-slate-200"
-                            }`}
-                          >
-                            <label className="flex items-center gap-2">
+                const memberById = (id) => {
+                  const expandedArr = Array.isArray(inputs?.expand?.[key])
+                    ? inputs.expand[key]
+                    : Array.isArray(row?.expand?.[key])
+                    ? row.expand[key]
+                    : null;
+                  const fromExpand = expandedArr?.find((m) => m?.id === id);
+                  if (fromExpand) return fromExpand;
+                  const opt = (opts || []).find((o) => o.id === id);
+                  return opt ? { id: opt.id, name: opt.label } : { id };
+                };
+
+                return (
+                  <div key={f.key} className="md:col-span-2">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-sm font-medium text-slate-700">
+                        {f.label}
+                      </div>
+                      <UIButton
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setAddUserOpen(true)}
+                        className="border border-slate-200"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add User
+                      </UIButton>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 p-2">
+                      <div className="flex flex-wrap gap-2">
+                        {opts.map((o) => {
+                          const checked = curr.includes(o.id);
+
+                          return (
+                            <div
+                              key={o.id}
+                              className={`flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${
+                                checked
+                                  ? "border-slate-900 bg-slate-50"
+                                  : "border-slate-200"
+                              }`}
+                            >
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    const next = checked
+                                      ? curr.filter((x) => x !== o.id)
+                                      : [...curr, o.id];
+                                    handleChange(key, next);
+                                  }}
+                                />
+                                <span>{o.label}</span>
+                              </label>
+
+                              {checked && (
+                                <button
+                                  type="button"
+                                  title="Edit member"
+                                  className="ml-1 inline-flex items-center justify-center rounded-md p-1 text-slate-600 hover:bg-slate-200"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setMemberToEdit(memberById(o.id));
+                                    setMemberEditOpen(true);
+                                  }}
+                                >
+                                  <Edit3 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                        {opts.length === 0 && (
+                          <div className="text-xs text-slate-500">
+                            No users found yet. Click <b>Add User</b> to create
+                            one.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-1 text-xs text-slate-500">
+                      Using team field: <b>{key}</b>
+                    </div>
+
+                    <AddTeamMemberModal
+                      open={addUserOpen}
+                      onClose={() => setAddUserOpen(false)}
+                      onCreated={async (created) => {
+                        await refreshTeamMemberOptions();
+                        await attachMemberToTeamNow(created.id);
+                      }}
+                    />
+
+                    <EditTeamMemberModal
+                      open={memberEditOpen}
+                      member={memberToEdit}
+                      onClose={() => {
+                        setMemberEditOpen(false);
+                        setMemberToEdit(null);
+                      }}
+                      onSaved={async () => {
+                        await refreshTeamMemberOptions();
+                        if (row?.id) {
+                          const fresh = await adminList("teams", {
+                            page: 1,
+                            perPage: 1,
+                            sort: "",
+                            filter: `id = "${row.id}"`,
+                            expand: MEMBERS_FIELD_CANDIDATES.join(","),
+                          });
+                          const nextTeam = fresh?.items?.[0];
+                          if (nextTeam) setInputs(nextTeam);
+                        }
+                        onSaved?.();
+                      }}
+                      onDeleted={async (deletedId) => {
+                        await removeMemberFromTeamNow(deletedId);
+                        await refreshTeamMemberOptions();
+                      }}
+                    />
+                  </div>
+                );
+              }
+
+              return (
+                <label key={f.key} className="flex flex-col gap-1 text-sm">
+                  <span className="font-medium text-slate-700">{f.label}</span>
+
+                  {f.type === "text" && (
+                    <UIInput
+                      value={v ?? ""}
+                      onChange={(e) => handleChange(f.key, e.target.value)}
+                    />
+                  )}
+
+                  {f.type === "number" && (
+                    <UIInput
+                      type="number"
+                      value={v ?? ""}
+                      onChange={(e) =>
+                        handleChange(
+                          f.key,
+                          e.target.value === "" ? "" : e.target.valueAsNumber
+                        )
+                      }
+                    />
+                  )}
+
+                  {f.type === "textarea" && (
+                    <UITextarea
+                      rows={4}
+                      value={v ?? ""}
+                      onChange={(e) => handleChange(f.key, e.target.value)}
+                    />
+                  )}
+
+                  {f.type === "checkbox" && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={!!inputs?.[f.key]}
+                        onChange={(e) => handleChange(f.key, e.target.checked)}
+                      />
+                    </div>
+                  )}
+
+                  {f.type === "select" && (
+                    <select
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      value={v ?? ""}
+                      onChange={(e) => handleChange(f.key, e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {f.options.map((o) => (
+                        <option key={o} value={o}>
+                          {o}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {f.type === "multiselect" && (
+                    <div className="rounded-lg border border-slate-200 p-2">
+                      <div className="flex flex-wrap gap-2">
+                        {f.options.map((opt) => {
+                          const checked = Array.isArray(inputs?.[f.key])
+                            ? inputs[f.key].includes(opt)
+                            : false;
+                          return (
+                            <label
+                              key={opt}
+                              className="flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1 text-xs"
+                            >
                               <input
                                 type="checkbox"
                                 checked={checked}
-                                onChange={() => {
-                                  const next = checked
-                                    ? curr.filter((x) => x !== o.id)
-                                    : [...curr, o.id];
-                                  handleChange(key, next);
-                                }}
+                                onChange={() => toggleMulti(f.key, opt)}
                               />
-                              <span>{o.label}</span>
+                              <span>{opt}</span>
                             </label>
-
-                            {checked && (
-                              <button
-                                type="button"
-                                title="Edit member"
-                                className="ml-1 inline-flex items-center justify-center rounded-md p-1 text-slate-600 hover:bg-slate-200"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setMemberToEdit(memberById(o.id));
-                                  setMemberEditOpen(true);
-                                }}
-                              >
-                                <Edit3 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {opts.length === 0 && (
-                        <div className="text-xs text-slate-500">
-                          No users found yet. Click <b>Add User</b> to create
-                          one.
-                        </div>
-                      )}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
-                  <div className="mt-1 text-xs text-slate-500">
-                    Using team field: <b>{key}</b>
-                  </div>
+                  {f.type === "relation" && (
+                    <select
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      value={inputs?.[f.key] ?? ""}
+                      onChange={(e) => handleChange(f.key, e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {(relationsCache[f.key] || []).map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
 
-                  <AddTeamMemberModal
-                    open={addUserOpen}
-                    onClose={() => setAddUserOpen(false)}
-                    onCreated={async (created) => {
-                      await refreshTeamMemberOptions();
-                      await attachMemberToTeamNow(created.id);
-                    }}
-                  />
-
-                  <EditTeamMemberModal
-                    open={memberEditOpen}
-                    member={memberToEdit}
-                    onClose={() => {
-                      setMemberEditOpen(false);
-                      setMemberToEdit(null);
-                    }}
-                    onSaved={async () => {
-                      await refreshTeamMemberOptions();
-                      if (row?.id) {
-                        const fresh = await adminList("teams", {
-                          page: 1,
-                          perPage: 1,
-                          sort: "",
-                          filter: `id = "${row.id}"`,
-                          expand: MEMBERS_FIELD_CANDIDATES.join(","),
-                        });
-                        const nextTeam = fresh?.items?.[0];
-                        if (nextTeam) setInputs(nextTeam);
-                      }
-                      onSaved?.();
-                    }}
-                    onDeleted={async (deletedId) => {
-                      await removeMemberFromTeamNow(deletedId);
-                      await refreshTeamMemberOptions();
-                    }}
-                  />
-                </div>
-              );
-            }
-
-            return (
-              <label key={f.key} className="flex flex-col gap-1 text-sm">
-                <span className="font-medium text-slate-700">{f.label}</span>
-
-                {f.type === "text" && (
-                  <UIInput
-                    value={v ?? ""}
-                    onChange={(e) => handleChange(f.key, e.target.value)}
-                  />
-                )}
-
-                {f.type === "number" && (
-                  <UIInput
-                    type="number"
-                    value={v ?? ""}
-                    onChange={(e) =>
-                      handleChange(
-                        f.key,
-                        e.target.value === "" ? "" : e.target.valueAsNumber
-                      )
-                    }
-                  />
-                )}
-
-                {f.type === "textarea" && (
-                  <UITextarea
-                    rows={4}
-                    value={v ?? ""}
-                    onChange={(e) => handleChange(f.key, e.target.value)}
-                  />
-                )}
-
-                {f.type === "checkbox" && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!inputs?.[f.key]}
-                      onChange={(e) => handleChange(f.key, e.target.checked)}
+                  {f.type === "datetime" && (
+                    <UIInput
+                      type="datetime-local"
+                      value={v ?? ""}
+                      onChange={(e) => handleChange(f.key, e.target.value)}
                     />
-                  </div>
-                )}
+                  )}
 
-                {f.type === "select" && (
-                  <select
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    value={v ?? ""}
-                    onChange={(e) => handleChange(f.key, e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {f.options.map((o) => (
-                      <option key={o} value={o}>
-                        {o}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                {f.type === "multiselect" && (
-                  <div className="rounded-lg border border-slate-200 p-2">
-                    <div className="flex flex-wrap gap-2">
-                      {f.options.map((opt) => {
-                        const checked = Array.isArray(inputs?.[f.key])
-                          ? inputs[f.key].includes(opt)
-                          : false;
-                        return (
-                          <label
-                            key={opt}
-                            className="flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1 text-xs"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleMulti(f.key, opt)}
-                            />
-                            <span>{opt}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {f.type === "relation" && (
-                  <select
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    value={inputs?.[f.key] ?? ""}
-                    onChange={(e) => handleChange(f.key, e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {(relationsCache[f.key] || []).map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                {f.type === "datetime" && (
-                  <UIInput
-                    type="datetime-local"
-                    value={v ?? ""}
-                    onChange={(e) => handleChange(f.key, e.target.value)}
-                  />
-                )}
-
-                {f.type === "json" && (
-                  <JsonEditor
-                    value={inputs?.[f.key]}
-                    onChange={(parsed) => handleChange(f.key, parsed)}
-                    placeholder={
-                      f.key === "tags"
-                        ? '["Legal","R&D"]'
-                        : '{"linkedin":"...","email":"..."}'
-                    }
-                  />
-                )}
-              </label>
-            );
-          })}
+                  {f.type === "json" && (
+                    <JsonEditor
+                      value={inputs?.[f.key]}
+                      onChange={(parsed) => handleChange(f.key, parsed)}
+                      placeholder={
+                        f.key === "tags"
+                          ? '["Legal","R&D"]'
+                          : '{"linkedin":"...","email":"..."}'
+                      }
+                    />
+                  )}
+                </label>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="mt-5 flex justify-end">
+        {/* Footer (fixed) */}
+        <div className="p-5 pt-3 border-t border-slate-200 flex items-center justify-between">
           <UIButton variant="ghost" onClick={onClose}>
             Cancel
           </UIButton>
+
+          {collection === "teams" && row?.id ? (
+            <button
+              type="button"
+              onClick={deleteTeam}
+              disabled={loading || deleting}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+              title="Delete Team"
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Delete Team
+            </button>
+          ) : (
+            <div />
+          )}
         </div>
       </div>
     </div>

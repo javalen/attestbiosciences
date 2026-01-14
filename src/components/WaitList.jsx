@@ -90,7 +90,7 @@ export default function WaitList() {
       <div className="container mx-auto px-4 lg:px-8 py-12 max-w-3xl">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-sky-900">
-            Join our wait list
+            Join Our Wait List
           </h1>
         </div>
 

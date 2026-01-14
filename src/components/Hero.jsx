@@ -47,7 +47,7 @@ const Hero = () => {
           <p className="text-slate-800 text-base lg:text-lg">
             Skip the waiting room and get clinical-grade results from the
             comfort of home. We’re rolling out a new lineup of convenient,
-            accurate at-home tests—be among the first to try them.
+            accurate at-home tests be among the first to try them.
           </p>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -87,11 +87,11 @@ const Hero = () => {
                 Home Testing is Coming
               </h3>
               <p className="mt-1 text-sm text-slate-700">
-                Be first in line—join our early access waitlist.
+                Be first in line join our early access waitlist.
               </p>
               <div className="mt-3 flex items-center gap-2">
                 <Link
-                  to="/login"
+                  to="/wait"
                   className="inline-flex items-center px-3 py-2 rounded-lg bg-sky-600 text-white hover:bg-sky-700 text-sm"
                 >
                   Join Now

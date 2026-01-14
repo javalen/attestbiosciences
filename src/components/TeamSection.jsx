@@ -185,7 +185,7 @@ function MemberCard({ m, onMemberClick }) {
           </CardHeader>
 
           <CardContent className="pt-0">
-            <p className="text-sm text-muted-foreground leading-relaxed line-clamp-3">
+            <p className="text-sm text-muted-foreground leading-relaxed">
               {m.bio}
             </p>
 
@@ -356,9 +356,7 @@ export default function TeamSection({
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          {loading
-            ? "Loading…"
-            : `${totalMembers} member${totalMembers === 1 ? "" : "s"}`}
+          {loading ? "Loading…" : ``}
         </p>
       </div>
 
