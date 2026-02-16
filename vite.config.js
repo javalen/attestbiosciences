@@ -11,5 +11,5 @@ export default defineConfig({
       "@": path.resolve(fileURLToPath(new URL("./src", import.meta.url))),
     },
   },
-  base: "/attestbiosciences",
+  base: "/",
 });
