@@ -20,6 +20,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+
 import AdvisoryTeam from "./AdvisoryTeam";
 
 // ✅ New data layer import (adjust path if your file differs)
@@ -89,8 +97,11 @@ function SocialLinks({ socials }) {
   if (!socials) return null;
   const { linkedin, twitter, website, email } = socials;
 
+  // stopPropagation so clicking icons doesn't open the profile dialog
+  const stop = (e) => e.stopPropagation();
+
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" onClick={stop}>
       {linkedin && (
         <Button
           asChild
@@ -103,6 +114,7 @@ function SocialLinks({ socials }) {
             target="_blank"
             rel="noreferrer"
             aria-label="LinkedIn"
+            onClick={stop}
           >
             <Linkedin className="h-4 w-4" />
           </a>
@@ -120,6 +132,7 @@ function SocialLinks({ socials }) {
             target="_blank"
             rel="noreferrer"
             aria-label="Twitter/X"
+            onClick={stop}
           >
             <Twitter className="h-4 w-4" />
           </a>
@@ -137,6 +150,7 @@ function SocialLinks({ socials }) {
             target="_blank"
             rel="noreferrer"
             aria-label="Website"
+            onClick={stop}
           >
             <Globe className="h-4 w-4" />
           </a>
@@ -149,7 +163,7 @@ function SocialLinks({ socials }) {
           variant="ghost"
           className="hover:scale-105 transition"
         >
-          <a href={`mailto:${email}`} aria-label="Email">
+          <a href={`mailto:${email}`} aria-label="Email" onClick={stop}>
             <Mail className="h-4 w-4" />
           </a>
         </Button>
@@ -158,67 +172,92 @@ function SocialLinks({ socials }) {
   );
 }
 
-function MemberCard({ m, onMemberClick }) {
+/**
+ * ✅ Equal-height cards + clamped bio preview:
+ * - CardContent uses a fixed min-height region for bio so every card starts same height.
+ * - Bio preview is line-clamped (same number of lines across cards).
+ * - Whole card is clickable to open a dialog with full text.
+ */
+function MemberCard({ m, onOpen }) {
   const img = m.imageUrl || m.image || "";
+  const hasBio = Boolean(String(m.bio || "").trim());
 
   return (
-    <div>
-      <motion.div
-        layout
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -12 }}
-        transition={{ duration: 0.25, ease: "easeOut" }}
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -12 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className="h-full"
+    >
+      <Card
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpen?.(m)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") onOpen?.(m);
+        }}
+        className="h-full rounded-2xl border border-border/60 shadow-sm hover:shadow-md transition overflow-hidden cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
       >
-        <Card className="h-full rounded-2xl border border-border/60 shadow-sm hover:shadow-md transition overflow-hidden">
-          <CardHeader className="flex flex-row items-center gap-4">
-            <Avatar className="h-14 w-14 ring-2 ring-primary/10">
-              <AvatarImage src={img} alt={m.name} />
-              <AvatarFallback>{initials(m.name)}</AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <h3 className="text-base font-semibold leading-tight truncate">
-                {m.name}
-              </h3>
-              <p className="text-sm text-muted-foreground truncate">{m.role}</p>
+        <CardHeader className="flex flex-row items-center gap-4">
+          <Avatar className="h-14 w-14 ring-2 ring-primary/10">
+            <AvatarImage src={img} alt={m.name} />
+            <AvatarFallback>{initials(m.name)}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold leading-tight truncate">
+              {m.name}
+            </h3>
+            <p className="text-sm text-muted-foreground truncate">{m.role}</p>
+          </div>
+        </CardHeader>
+
+        {/* ✅ Make the body a column so footer can sit at bottom (equal-height cards look clean) */}
+        <CardContent className="pt-0 flex flex-col">
+          {/* ✅ Fixed preview area height so all cards start same height */}
+          <div className="min-h-[84px]">
+            {hasBio ? (
+              <p className="text-sm text-muted-foreground leading-relaxed line-clamp-4">
+                {m.bio}
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">
+                No bio available.
+              </p>
+            )}
+          </div>
+
+          {Array.isArray(m.tags) && m.tags.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {m.tags.map((t, i) => (
+                <Badge
+                  key={`${m.id}-tag-${i}`}
+                  variant="secondary"
+                  className="rounded-full"
+                >
+                  {t}
+                </Badge>
+              ))}
             </div>
-          </CardHeader>
+          )}
+        </CardContent>
 
-          <CardContent className="pt-0">
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {m.bio}
-            </p>
-
-            {Array.isArray(m.tags) && m.tags.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {m.tags.map((t, i) => (
-                  <Badge
-                    key={`${m.id}-tag-${i}`}
-                    variant="secondary"
-                    className="rounded-full"
-                  >
-                    {t}
-                  </Badge>
-                ))}
-              </div>
-            )}
-          </CardContent>
-
-          <CardFooter className="flex items-center justify-between">
-            <SocialLinks socials={m.socials} />
-            {onMemberClick && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onMemberClick(m)}
-              >
-                View Profile
-              </Button>
-            )}
-          </CardFooter>
-        </Card>
-      </motion.div>
-    </div>
+        <CardFooter className="flex items-center justify-between mt-auto">
+          <SocialLinks socials={m.socials} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen?.(m);
+            }}
+          >
+            View Profile
+          </Button>
+        </CardFooter>
+      </Card>
+    </motion.div>
   );
 }
 
@@ -262,14 +301,15 @@ function TeamAccordion({ label, open, onToggle, children }) {
   );
 }
 
-export default function TeamSection({
-  title = "Meet the Team",
-  onMemberClick,
-}) {
+export default function TeamSection({ title = "Meet the Team" }) {
   const [teams, setTeams] = useState([]); // [{ id, title, order, members: TeamMember[] }]
   const [openTeamIds, setOpenTeamIds] = useState(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // ✅ Dialog state for full profile
+  const [activeMember, setActiveMember] = useState(null);
+  const dialogOpen = Boolean(activeMember);
 
   // ✅ Use new data layer (server API), NOT PocketBase client in browser
   useEffect(() => {
@@ -335,7 +375,7 @@ export default function TeamSection({
 
   const totalMembers = useMemo(
     () => teams.reduce((sum, t) => sum + (t.members?.length || 0), 0),
-    [teams]
+    [teams],
   );
 
   const toggleTeam = (teamId) => {
@@ -356,7 +396,7 @@ export default function TeamSection({
           <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          {loading ? "Loading…" : ``}
+          {loading ? "Loading…" : totalMembers ? `${totalMembers} members` : ``}
         </p>
       </div>
 
@@ -387,13 +427,13 @@ export default function TeamSection({
                   <AnimatePresence mode="popLayout">
                     <motion.div
                       layout
-                      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
+                      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch"
                     >
                       {t.members.map((m) => (
                         <MemberCard
                           key={m.id}
                           m={m}
-                          onMemberClick={onMemberClick}
+                          onOpen={(member) => setActiveMember(member)}
                         />
                       ))}
                     </motion.div>
@@ -412,6 +452,77 @@ export default function TeamSection({
           )}
         </div>
       )}
+
+      {/* ✅ Profile Dialog (full text) */}
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(v) => !v && setActiveMember(null)}
+      >
+        <DialogContent className="max-w-2xl">
+          {activeMember && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-3">
+                  <Avatar className="h-12 w-12 ring-2 ring-primary/10">
+                    <AvatarImage
+                      src={activeMember.imageUrl || activeMember.image || ""}
+                      alt={activeMember.name}
+                    />
+                    <AvatarFallback>
+                      {initials(activeMember.name)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0">
+                    <div className="text-base font-semibold truncate">
+                      {activeMember.name}
+                    </div>
+                    <div className="text-sm text-muted-foreground truncate">
+                      {activeMember.role}
+                    </div>
+                  </div>
+                </DialogTitle>
+                <DialogDescription className="sr-only">
+                  Team member profile
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                {/* Full bio */}
+                <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+                  {activeMember.bio || "No bio available."}
+                </div>
+
+                {/* Tags */}
+                {Array.isArray(activeMember.tags) &&
+                  activeMember.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {activeMember.tags.map((t, i) => (
+                        <Badge
+                          key={`${activeMember.id}-dlg-tag-${i}`}
+                          variant="secondary"
+                          className="rounded-full"
+                        >
+                          {t}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+
+                {/* Socials */}
+                <div className="flex items-center justify-between">
+                  <SocialLinks socials={activeMember.socials} />
+                  <Button
+                    variant="outline"
+                    onClick={() => setActiveMember(null)}
+                  >
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

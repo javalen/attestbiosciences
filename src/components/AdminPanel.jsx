@@ -61,7 +61,7 @@ const toDatetimeLocal = (iso) => {
     const d = new Date(iso);
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(
-      d.getHours()
+      d.getHours(),
     )}:${p(d.getMinutes())}`;
   } catch {
     return "";
@@ -395,8 +395,8 @@ const FIELD_CONFIG = {
             ? Array.isArray(r?.included_test)
               ? r.included_test.length
               : Array.isArray(r?.expand?.included_test)
-              ? r.expand.included_test.length
-              : 0
+                ? r.expand.included_test.length
+                : 0
             : "—",
       },
     ],
@@ -540,6 +540,39 @@ function UITextarea({ className = "", ...rest }) {
 }
 
 /* ---------- Options helper ---------- */
+/* ---------- Site Settings (global) ---------- */
+async function getSiteSettings() {
+  // Expecting a single record keyed by "global"
+  // If it doesn't exist yet, we'll return defaults.
+  try {
+    const res = await adminList("site_settings", {
+      page: 1,
+      perPage: 1,
+      filter: `key = "global"`,
+      sort: "",
+    });
+    const item = res?.items?.[0];
+    if (!item?.id) return { id: null, show_footer: true };
+    return { id: item.id, show_footer: item.show_footer ?? true };
+  } catch {
+    return { id: null, show_footer: true };
+  }
+}
+
+async function upsertSiteSettings(patch) {
+  // Creates if missing; updates if present
+  const current = await getSiteSettings();
+  if (current.id) {
+    const res = await adminUpdate("site_settings", current.id, patch);
+    return { id: res?.item?.id ?? current.id, ...res?.item };
+  }
+  const res = await adminCreate("site_settings", {
+    key: "global",
+    show_footer: patch?.show_footer ?? true,
+  });
+  return { id: res?.item?.id ?? null, ...res?.item };
+}
+
 async function fetchOptions(collection, display) {
   const res = await adminOptions(collection, { display, sort: "name,label" });
   return res.options || [];
@@ -660,7 +693,7 @@ function EditTeamMemberModal({ open, onClose, member, onSaved, onDeleted }) {
       fd.set("bio", inputs.bio ?? "");
       fd.set(
         "order",
-        inputs.order === "" || inputs.order == null ? "" : String(inputs.order)
+        inputs.order === "" || inputs.order == null ? "" : String(inputs.order),
       );
       fd.set("tags", JSON.stringify(inputs.tags ?? []));
       fd.set("socials", JSON.stringify(inputs.socials ?? {}));
@@ -680,7 +713,7 @@ function EditTeamMemberModal({ open, onClose, member, onSaved, onDeleted }) {
     if (!member?.id) return;
 
     const ok = window.confirm(
-      `Delete member "${member?.name || member?.id}"?\n\nThis cannot be undone.`
+      `Delete member "${member?.name || member?.id}"?\n\nThis cannot be undone.`,
     );
     if (!ok) return;
 
@@ -811,7 +844,7 @@ function EditTeamMemberModal({ open, onClose, member, onSaved, onDeleted }) {
               onChange={(e) =>
                 handle(
                   "order",
-                  e.target.value === "" ? "" : e.target.valueAsNumber
+                  e.target.value === "" ? "" : e.target.valueAsNumber,
                 )
               }
             />
@@ -894,7 +927,7 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
       fd.set("bio", inputs.bio ?? "");
       fd.set(
         "order",
-        inputs.order === "" || inputs.order == null ? "" : String(inputs.order)
+        inputs.order === "" || inputs.order == null ? "" : String(inputs.order),
       );
       fd.set("tags", JSON.stringify(inputs.tags ?? []));
       fd.set("socials", JSON.stringify(inputs.socials ?? {}));
@@ -1020,7 +1053,7 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
               onChange={(e) =>
                 handle(
                   "order",
-                  e.target.value === "" ? "" : e.target.valueAsNumber
+                  e.target.value === "" ? "" : e.target.valueAsNumber,
                 )
               }
             />
@@ -1087,14 +1120,14 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
   useEffect(() => {
     (async () => {
       const relKeys = (cfg?.formFields || []).filter(
-        (f) => f.type === "relation" || f.type === "multirelation"
+        (f) => f.type === "relation" || f.type === "multirelation",
       );
 
       const entries = await Promise.all(
         relKeys.map(async (f) => [
           f.key,
           await fetchOptions(f.collection, f.display),
-        ])
+        ]),
       );
 
       const map = {};
@@ -1167,7 +1200,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
 
   const buildPayload = () => {
     const hasFile = cfg.formFields.some(
-      (f) => f.type === "file" && inputs?.[f.key] instanceof File
+      (f) => f.type === "file" && inputs?.[f.key] instanceof File,
     );
 
     if (!hasFile) {
@@ -1245,7 +1278,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
 
     const label = inputs?.title || row?.title || row?.id;
     const ok = window.confirm(
-      `Delete team "${label}"?\n\nThis cannot be undone.`
+      `Delete team "${label}"?\n\nThis cannot be undone.`,
     );
     if (!ok) return;
 
@@ -1395,8 +1428,8 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                   const expandedArr = Array.isArray(inputs?.expand?.[key])
                     ? inputs.expand[key]
                     : Array.isArray(row?.expand?.[key])
-                    ? row.expand[key]
-                    : null;
+                      ? row.expand[key]
+                      : null;
                   const fromExpand = expandedArr?.find((m) => m?.id === id);
                   if (fromExpand) return fromExpand;
                   const opt = (opts || []).find((o) => o.id === id);
@@ -1538,7 +1571,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                       onChange={(e) =>
                         handleChange(
                           f.key,
-                          e.target.value === "" ? "" : e.target.valueAsNumber
+                          e.target.value === "" ? "" : e.target.valueAsNumber,
                         )
                       }
                     />
@@ -1722,6 +1755,24 @@ function CollectionCrudView({ collection }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editRow, setEditRow] = useState(undefined);
   const [page, setPage] = useState(1);
+  const [showFooter, setShowFooter] = useState(true);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    async function loadSettings() {
+      if (collection !== "pages") return;
+      setSettingsLoading(true);
+      const s = await getSiteSettings();
+      if (!alive) return;
+      setShowFooter(!!s.show_footer);
+      setSettingsLoading(false);
+    }
+    loadSettings();
+    return () => {
+      alive = false;
+    };
+  }, [collection]);
 
   const buildFilter = (c, query) => {
     if (!query) return "";
@@ -1743,10 +1794,10 @@ function CollectionCrudView({ collection }) {
         collection === "test"
           ? "cat_id,included_test"
           : collection === "cart"
-          ? "user,test"
-          : collection === "teams"
-          ? MEMBERS_FIELD_CANDIDATES.join(",")
-          : undefined;
+            ? "user,test"
+            : collection === "teams"
+              ? MEMBERS_FIELD_CANDIDATES.join(",")
+              : undefined;
 
       const sort =
         cfg?.sort ?? (collection === "pages" ? "order,label" : "-updated");
@@ -1791,22 +1842,32 @@ function CollectionCrudView({ collection }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
-            <UIInput
-              placeholder="Search…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && load(1)}
-              className="pl-8"
+      <div className="flex items-center gap-3">
+        {collection === "pages" && (
+          <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={!!showFooter}
+              disabled={settingsLoading}
+              onChange={async (e) => {
+                const next = e.target.checked;
+                setShowFooter(next); // optimistic
+                try {
+                  await upsertSiteSettings({ show_footer: next });
+                } catch (err) {
+                  // revert if save fails
+                  setShowFooter((prev) => !prev);
+                  alert(err?.message ?? "Failed to update setting");
+                }
+              }}
             />
-          </div>
-          <UIButton variant="ghost" onClick={() => load(1)}>
-            Refresh
-          </UIButton>
-        </div>
+            <span className="font-medium">Show footer</span>
+            {settingsLoading && (
+              <span className="ml-2 text-xs text-slate-500">Saving…</span>
+            )}
+          </label>
+        )}
+
         <UIButton onClick={openAdd}>
           <Plus className="h-4 w-4" />
           Add New
@@ -1853,7 +1914,7 @@ function CollectionCrudView({ collection }) {
                         key={h.key}
                         className="px-3 py-2 text-sm text-slate-700"
                       >
-                        {h.render ? h.render(row) : row[h.key] ?? "—"}
+                        {h.render ? h.render(row) : (row[h.key] ?? "—")}
                       </td>
                     ))}
                     <td

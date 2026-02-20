@@ -12,4 +12,23 @@ export default defineConfig({
     },
   },
   base: "/",
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:8080", // your server.js port
+        changeOrigin: true,
+        secure: false,
+      },
+      "/pages": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/testimonials": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
 });
