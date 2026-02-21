@@ -98,6 +98,17 @@ export default function Header() {
   const [cartOpen, setCartOpen] = useState(false);
   const [cartCount, setCartCount] = useState(0);
 
+  const openCart = () => {
+    if (!isLoggedIn) {
+      navigate("/login/signin", {
+        state: { redirectTo: location.pathname + location.search },
+      });
+      return;
+    }
+    setCartOpen(true);
+    setOpenAccount(false); // close dropdown if coming from Orders
+  };
+
   // Refresh cart count
   const refreshCartCount = useCallback(async () => {
     if (!pb.authStore.isValid || !pb.authStore.model) {
@@ -290,7 +301,11 @@ export default function Header() {
                       </>
                     ) : (
                       <>
-                        <button className={menuItem} type="button">
+                        <button
+                          className={menuItem}
+                          type="button"
+                          onClick={openCart}
+                        >
                           Orders
                         </button>
                         <button className={menuItem} type="button">
