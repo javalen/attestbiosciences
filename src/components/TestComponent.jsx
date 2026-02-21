@@ -99,7 +99,7 @@ export function TestsIndex() {
     return tests.filter((t) =>
       [t.name, t.description, getCatName(t), t.cost]
         .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(term))
+        .some((v) => String(v).toLowerCase().includes(term)),
     );
   }, [q, tests]);
 
@@ -117,7 +117,7 @@ export function TestsIndex() {
   // Only show categories that actually have tests after filters
   const visibleCategories = useMemo(() => {
     return (categories || []).filter(
-      (cat) => (testsByCat.get(cat.id) || []).length > 0
+      (cat) => (testsByCat.get(cat.id) || []).length > 0,
     );
   }, [categories, testsByCat]);
 
@@ -161,13 +161,13 @@ export function TestsIndex() {
   }
 
   return (
-    <section className="min-h-[70vh] bg-white">
+    <section className="min-h-[70vh] bg-white mt-10">
       <div className="container mx-auto px-4 lg:px-8 py-12">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-sky-900">
-              Tests by Category
+              Featured Products
             </h1>
             <p className="text-slate-600">
               Expand a category to view its tests.
@@ -373,8 +373,8 @@ async function addTestToCart(userId, testId) {
   const current = Array.isArray(cart.test)
     ? cart.test.slice()
     : cart.test
-    ? [cart.test]
-    : [];
+      ? [cart.test]
+      : [];
 
   if (current.includes(testId)) {
     return { cartId: cart.id, already: true };
@@ -476,7 +476,7 @@ export function TestDetail() {
     : [];
 
   return (
-    <section className="min-h-[60vh] bg-white">
+    <section className="min-h-[60vh] bg-white mt-10">
       <div className="container mx-auto px-4 lg:px-8 py-12">
         <Link
           to="/tests"
@@ -650,10 +650,8 @@ export function TestDetail() {
   );
 }
 
-/**
- * Drop-in feature routes. Mount this inside your existing <Router>.
- */
 export default function TestsFeature() {
+  console.log("Rendering TestFeature");
   return (
     <Routes>
       <Route path="/tests" element={<TestsIndex />} />

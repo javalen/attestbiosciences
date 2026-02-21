@@ -1,47 +1,23 @@
-// Header.jsx
-import { useEffect, useRef, useState } from "react";
-import { NavLink, Link, useNavigate, useLocation } from "react-router-dom";
-import {
-  Menu,
-  X,
-  ShoppingCart,
-  User,
-  LogIn,
-  ChevronDown,
-  Loader2,
-  Trash2,
-} from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Search, ShoppingCart, User, Loader2, Trash2 } from "lucide-react";
 import pb from "@/db/pocketbase";
-import AttestLogo from "@/assets/attest-logo.png";
 
 /* -------------------------------------------------------------------------- */
-/*                          Data Server helper (fetch)                         */
+/*                                API helpers                                 */
 /* -------------------------------------------------------------------------- */
-/**
- * Expected DATA SERVER env var(s):
- *  - VITE_DATA_SERVER_URL (preferred)
- *  - VITE_API_URL (fallback)
- *
- * Expected endpoints (adjust paths if your server differs):
- *  - GET    /pages/nav
- *  - GET    /cart/open?expandTest=1
- *  - PATCH  /cart/:id   body: { test: [...], last_activity_at: ISOString }
- */
-const DATA_SERVER_BASE = import.meta.env.VITE_PUBLIC_API_BASE?.replace(
-  /\/+$/,
-  ""
-);
-console.log("Data Server", DATA_SERVER_BASE);
+const DATA_SERVER_BASE = String(
+  import.meta.env.VITE_PUBLIC_API_BASE || "",
+).replace(/\/+$/, "");
+
 async function apiFetch(path, { method = "GET", body, signal } = {}) {
   if (!DATA_SERVER_BASE) {
-    throw new Error(
-      "Missing DATA SERVER base URL. Set VITE_DATA_SERVER_URL (or VITE_API_URL)."
-    );
+    throw new Error("Missing VITE_PUBLIC_API_BASE");
   }
 
   const headers = { "Content-Type": "application/json" };
 
-  // If your data server validates PocketBase JWTs, send it.
+  // Send PB JWT if available
   if (pb?.authStore?.isValid && pb?.authStore?.token) {
     headers.Authorization = `Bearer ${pb.authStore.token}`;
   }
@@ -51,57 +27,18 @@ async function apiFetch(path, { method = "GET", body, signal } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
     signal,
-    //credentials: "include", // ok if your server uses cookies; harmless otherwise
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    // try to surface a useful message
     throw new Error(text || `Request failed (${res.status})`);
   }
 
-  // allow empty 204
   if (res.status === 204) return null;
-
   return res.json();
 }
 
-/* -------------------------- NAV PAGES (Data server) ------------------------- */
-function useNavPages() {
-  const [links, setLinks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    const ac = new AbortController();
-
-    async function load() {
-      setErr("");
-      setLoading(true);
-      try {
-        // Server should enforce published/show_in_nav rules
-        const data = await apiFetch("/pages/nav", { signal: ac.signal });
-        // accept either {items:[...]} or [...]
-        const items = Array.isArray(data) ? data : data?.items || [];
-        setLinks(items);
-      } catch (e) {
-        setErr(e?.message || "Failed to load nav links.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    load();
-    return () => ac.abort();
-  }, []);
-
-  return { links, loading, err };
-}
-
-/* -------------------------- Shared helpers (cart) --------------------------- */
-const baseLink = "transition hover:text-sky-600";
-const activeLink = "text-sky-600";
-
+/* ------------------------------ Cart helpers ------------------------------ */
 function countTestsInCart(cart) {
   const t = cart?.test;
   const te = cart?.expand?.test;
@@ -112,376 +49,289 @@ function countTestsInCart(cart) {
 }
 
 async function findOpenCart(expand = false, signal) {
-  // Data server should infer user from token/cookie and return open cart (or null)
-  // Supports optional expandTest=1 to include test objects.
   const qs = expand ? "?expandTest=1" : "";
   try {
     return await apiFetch(`/cart/open${qs}`, { signal });
   } catch (e) {
-    // If your server returns 404 for no open cart, you can treat it as null.
-    // Here we do best-effort parsing from message.
     if (String(e?.message || "").includes("404")) return null;
     throw e;
   }
 }
 
-/* --------------------------------- Header ---------------------------------- */
-const Header = () => {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [user, setUser] = useState(pb.authStore.model);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const userMenuRef = useRef(null);
-  const navigate = useNavigate();
-  const location = useLocation();
+/* -------------------------------------------------------------------------- */
+/*                                   Styles                                   */
+/* -------------------------------------------------------------------------- */
+const navLinkBase =
+  "text-white hover:text-white transition-colors duration-200 text-[16px] tracking-[0.16em] font-bold h-[40px] flex items-center";
 
-  const loggedIn = pb.authStore.isValid && !!user;
-  const displayName = user?.name || user?.username || user?.email || "Account";
+const menuItem =
+  "block w-full text-left text-white hover:text-white transition-colors duration-150 text-[13px] tracking-[0.18em] font-semibold py-2";
+
+function SolidUserIcon({ size = 18 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M12 12c2.761 0 5-2.239 5-5S14.761 2 12 2 7 4.239 7 7s2.239 5 5 5z" />
+      <path d="M12 14c-4.418 0-8 2.239-8 5v1c0 .552.448 1 1 1h14c.552 0 1-.448 1-1v-1c0-2.761-3.582-5-8-5z" />
+    </svg>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                   Header                                   */
+/* -------------------------------------------------------------------------- */
+export default function Header() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const isHome = location.pathname === "/";
+  const isLoggedIn = pb.authStore.isValid && !!pb.authStore.model;
+
+  const [openAccount, setOpenAccount] = useState(false);
+  const menuRef = useRef(null);
 
   const [cartOpen, setCartOpen] = useState(false);
   const [cartCount, setCartCount] = useState(0);
 
-  const { links: navLinks, loading: navLoading } = useNavPages();
+  // Refresh cart count
+  const refreshCartCount = useCallback(async () => {
+    if (!pb.authStore.isValid || !pb.authStore.model) {
+      setCartCount(0);
+      return;
+    }
+    try {
+      const cart = await findOpenCart(false);
+      setCartCount(countTestsInCart(cart));
+    } catch {
+      setCartCount(0);
+    }
+  }, []);
 
-  // Keep user state in sync with PB auth changes
+  // On mount + on auth changes refresh cart count
   useEffect(() => {
+    refreshCartCount();
     const unsub = pb.authStore.onChange(() => {
-      setUser(pb.authStore.model);
+      refreshCartCount();
     });
     return () => {
       if (typeof unsub === "function") unsub();
     };
-  }, []);
+  }, [refreshCartCount]);
 
-  // Auth changes → load cart count (no realtime subscribe here; data server can add SSE later)
-  useEffect(() => {
-    const ac = new AbortController();
-
-    async function refreshCartCount() {
-      if (!pb.authStore.isValid || !pb.authStore.model) {
-        setCartCount(0);
-        return;
-      }
-      try {
-        const cart = await findOpenCart(false, ac.signal);
-        setCartCount(countTestsInCart(cart));
-      } catch {
-        // keep quiet; don't block header
-        setCartCount(0);
-      }
-    }
-
-    refreshCartCount();
-    return () => ac.abort();
-  }, [pb.authStore.isValid, pb.authStore.model?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Close user menu on outside click
-  useEffect(() => {
-    function onDocClick(e) {
-      if (!isUserMenuOpen) return;
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
-        setIsUserMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [isUserMenuOpen]);
-
-  async function handleSignOut() {
+  const handleLogout = () => {
     pb.authStore.clear();
-    setIsUserMenuOpen(false);
     setCartCount(0);
-    navigate("/");
-  }
+    setOpenAccount(false);
+    setCartOpen(false);
+    navigate("/", { replace: true });
+  };
+
+  // Close dropdown on outside click + ESC
+  useEffect(() => {
+    function onDown(e) {
+      if (e.key === "Escape") setOpenAccount(false);
+    }
+    function onClick(e) {
+      if (!openAccount) return;
+      if (menuRef.current && !menuRef.current.contains(e.target))
+        setOpenAccount(false);
+    }
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [openAccount]);
 
   return (
-    <header className="scroll-mt-20 bg-white shadow-md sticky top-0 z-50">
-      <div className="w-full flex items-center justify-between gap-4 py-4 px-4 lg:px-8">
-        {/* Logo */}
-        <Link to="/" className="flex items-center gap-3 shrink-0">
-          <img
-            src={AttestLogo}
-            alt="Attest BioSciences"
-            className="h-12 md:h-14 w-auto object-contain"
-          />
-          <span className="hidden lg:inline xl:hidden text-xl font-bold text-sky-600 whitespace-nowrap">
-            Attest
-          </span>
-          <span className="hidden xl:inline text-2xl 2xl:text-3xl font-bold text-sky-600 whitespace-nowrap">
-            Attest BioSciences
-          </span>
-        </Link>
-
-        {/* Desktop Navigation */}
-        <nav className="hidden lg:flex flex-1 justify-center gap-6 text-gray-700 font-medium min-w-0 whitespace-nowrap overflow-x-auto">
-          {navLoading && <span className="text-slate-400">Loading…</span>}
-          {!navLoading &&
-            navLinks.map((link) => {
-              const isExternal = !!link.external_url && !link.path;
-              const label = link.label ?? "";
-              if (isExternal) {
-                return (
-                  <a
-                    key={link.id}
-                    href={link.external_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={baseLink}
-                  >
-                    {label}
-                  </a>
-                );
-              }
-              return (
-                <NavLink
-                  key={link.id}
-                  to={link.path || "/"}
-                  className={({ isActive }) =>
-                    `${baseLink} ${isActive ? activeLink : ""}`
-                  }
-                  end={(link.path || "/") === "/"}
-                >
-                  {label}
-                </NavLink>
-              );
-            })}
-        </nav>
-
-        {/* Right side: Auth + Cart */}
-        <div className="hidden md:flex items-center gap-4 shrink-0 whitespace-nowrap">
-          {loggedIn ? (
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => {
-                  if (!loggedIn) {
-                    navigate("/login", {
-                      state: {
-                        redirectTo: location.pathname + location.search,
-                      },
-                    });
-                    return;
-                  }
-                  setCartOpen(true);
-                }}
-                aria-label="Shopping cart"
-                className="relative p-2 rounded-lg hover:bg-slate-100"
-                title="Cart"
-              >
-                <ShoppingCart className="w-5 h-5 text-slate-700" />
-                {cartCount > 0 && (
-                  <span className="absolute -top-1 -right-1 text-[10px] leading-none bg-sky-600 text-white px-1.5 py-0.5 rounded-full">
-                    {cartCount}
+    <>
+      <header
+        className={`
+          fixed top-0 left-0 w-full z-50
+          transition-colors duration-300
+          ${isHome ? "bg-transparent" : "bg-black"}
+        `}
+      >
+        <div className="px-[56px] pt-[26px] pb-[18px]">
+          <div className="flex items-center justify-between">
+            {/* LEFT */}
+            <nav className="flex items-center gap-[56px]">
+              <NavLink to="/" end>
+                {({ isActive }) => (
+                  <span className={navLinkBase}>
+                    {isActive && <span className="mr-2">-</span>}
+                    Home
                   </span>
                 )}
+              </NavLink>
+
+              <NavLink to="/about">
+                {({ isActive }) => (
+                  <span className={navLinkBase}>
+                    {isActive && <span className="mr-2">-</span>}
+                    About
+                  </span>
+                )}
+              </NavLink>
+
+              <NavLink to="/team">
+                {({ isActive }) => (
+                  <span className={navLinkBase}>
+                    {isActive && <span className="mr-2">-</span>}
+                    Team
+                  </span>
+                )}
+              </NavLink>
+
+              <NavLink to="/contact">
+                {({ isActive }) => (
+                  <span className={navLinkBase}>
+                    {isActive && <span className="mr-2">-</span>}
+                    Contact
+                  </span>
+                )}
+              </NavLink>
+
+              <NavLink to="/tests">
+                {({ isActive }) => (
+                  <span className={navLinkBase}>
+                    {isActive && <span className="mr-2">-</span>}
+                    Our Test
+                  </span>
+                )}
+              </NavLink>
+            </nav>
+
+            {/* RIGHT */}
+            <div className="flex items-center gap-[22px] text-white/80">
+              <button
+                type="button"
+                aria-label="Search"
+                className="hover:text-white transition-colors duration-200"
+              >
+                <Search size={18} strokeWidth={1.4} />
               </button>
 
-              <div className="relative" ref={userMenuRef}>
+              {/* Cart (old logic) */}
+              {isLoggedIn && (
                 <button
-                  onClick={() => setIsUserMenuOpen((s) => !s)}
-                  aria-haspopup="menu"
-                  aria-expanded={isUserMenuOpen}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50"
+                  type="button"
+                  aria-label="Cart"
+                  className="relative hover:text-white transition-colors duration-200"
+                  onClick={() => setCartOpen(true)}
+                  title="Cart"
                 >
-                  <User className="w-5 h-5 text-slate-700" />
-                  <span className="hidden xl:inline text-sm font-medium text-slate-800">
-                    {displayName}
-                  </span>
-                  <ChevronDown className="w-4 h-4 text-slate-600" />
+                  <ShoppingCart size={18} strokeWidth={1.4} />
+                  {cartCount > 0 && (
+                    <span className="absolute -top-2 -right-2 text-[10px] leading-none bg-white text-black px-1.5 py-0.5 rounded-full">
+                      {cartCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {/* Account dropdown */}
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  aria-label="Account"
+                  aria-expanded={openAccount}
+                  className="hover:text-white transition-colors duration-200"
+                  onClick={() => setOpenAccount((v) => !v)}
+                >
+                  {isLoggedIn ? (
+                    <SolidUserIcon size={18} />
+                  ) : (
+                    <User size={18} strokeWidth={1.4} />
+                  )}
                 </button>
 
-                {isUserMenuOpen && (
+                {openAccount && (
                   <div
-                    role="menu"
-                    className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-lg p-2"
+                    className="
+                      absolute right-0 mt-4 w-[280px]
+                      bg-[#0d0f12]/95
+                      shadow-[0_12px_30px_rgba(0,0,0,0.45)]
+                      border border-white/5
+                      px-8 py-6
+                    "
                   >
-                    <Link
-                      to="/account"
-                      className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-800"
-                      onClick={() => setIsUserMenuOpen(false)}
-                    >
-                      Edit information
-                    </Link>
-                    <Link
-                      to="/orders"
-                      className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-800"
-                      onClick={() => setIsUserMenuOpen(false)}
-                    >
-                      Recent orders
-                    </Link>
-                    <Link
-                      to="/book"
-                      className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-800"
-                      onClick={() => setIsUserMenuOpen(false)}
-                    >
-                      Contact us
-                    </Link>
-                    {user?.isAdmin && (
-                      <Link
-                        to="/admin"
-                        className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-800"
-                        onClick={() => setIsUserMenuOpen(false)}
-                      >
-                        Admin Panel
-                      </Link>
+                    {!isLoggedIn ? (
+                      <>
+                        <NavLink
+                          to="/login/signin"
+                          onClick={() => setOpenAccount(false)}
+                        >
+                          {({ isActive }) => (
+                            <span className={menuItem}>
+                              {isActive && <span className="mr-2">-</span>}
+                              Login
+                            </span>
+                          )}
+                        </NavLink>
+
+                        <NavLink
+                          to="/login/signup"
+                          onClick={() => setOpenAccount(false)}
+                        >
+                          {({ isActive }) => (
+                            <span className={menuItem}>
+                              {isActive && <span className="mr-2">-</span>}
+                              Create Account
+                            </span>
+                          )}
+                        </NavLink>
+                      </>
+                    ) : (
+                      <>
+                        <button className={menuItem} type="button">
+                          Orders
+                        </button>
+                        <button className={menuItem} type="button">
+                          My Account
+                        </button>
+
+                        <div className="my-4 h-px bg-white/10" />
+
+                        <button
+                          onClick={handleLogout}
+                          className={menuItem}
+                          type="button"
+                        >
+                          Logout
+                        </button>
+                      </>
                     )}
-                    <div className="my-1 border-t border-slate-200" />
-                    <button
-                      onClick={handleSignOut}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-700"
-                    >
-                      Sign out
-                    </button>
                   </div>
                 )}
               </div>
             </div>
-          ) : (
-            <Link
-              to="/login"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-sm text-sky-700"
-              title="Log in / Create account"
-            >
-              <LogIn className="w-5 h-5" />
-              <span>Log in / Create account</span>
-            </Link>
-          )}
-        </div>
-
-        {/* Mobile Menu Icon */}
-        <div className="lg:hidden">
-          <button
-            aria-label="Toggle menu"
-            onClick={() => setIsMenuOpen((s) => !s)}
-          >
-            {isMenuOpen ? (
-              <X className="text-gray-700" />
-            ) : (
-              <Menu className="text-gray-700" />
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Mobile Dropdown Menu */}
-      {isMenuOpen && (
-        <div className="lg:hidden bg-white border-t border-gray-200 shadow-md px-4 py-4 space-y-3 text-gray-700 font-medium">
-          {navLoading && <div className="text-slate-400">Loading…</div>}
-          {!navLoading &&
-            navLinks.map((link) => {
-              const isExternal = !!link.external_url && !link.path;
-              const label = link.label ?? "";
-              if (isExternal) {
-                return (
-                  <a
-                    key={link.id}
-                    href={link.external_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`block ${baseLink}`}
-                    onClick={() => setIsMenuOpen(false)}
-                  >
-                    {label}
-                  </a>
-                );
-              }
-              return (
-                <NavLink
-                  key={link.id}
-                  to={link.path || "/"}
-                  className={({ isActive }) =>
-                    `block ${baseLink} ${isActive ? activeLink : ""}`
-                  }
-                  end={(link.path || "/") === "/"}
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  {label}
-                </NavLink>
-              );
-            })}
-
-          {/* Mobile Auth Area */}
-          <div className="pt-3 mt-2 border-t border-slate-200">
-            {loggedIn ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-slate-700">
-                  <User className="w-5 h-5" />
-                  <span className="text-sm">{displayName}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Link
-                    to="/cart"
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200"
-                    onClick={() => setIsMenuOpen(false)}
-                  >
-                    <ShoppingCart className="w-5 h-5" />
-                    Cart
-                  </Link>
-                  <button
-                    onClick={() => {
-                      handleSignOut();
-                      setIsMenuOpen(false);
-                    }}
-                    className="px-3 py-2 rounded-lg border border-slate-200"
-                  >
-                    Sign out
-                  </button>
-                </div>
-                <div className="grid gap-2">
-                  <Link
-                    to="/account"
-                    onClick={() => setIsMenuOpen(false)}
-                    className="block px-2 py-2 rounded hover:bg-slate-50 text-sm"
-                  >
-                    Edit information
-                  </Link>
-                  <Link
-                    to="/orders"
-                    onClick={() => setIsMenuOpen(false)}
-                    className="block px-2 py-2 rounded hover:bg-slate-50 text-sm"
-                  >
-                    Recent orders
-                  </Link>
-                  <Link
-                    to="/book"
-                    onClick={() => setIsMenuOpen(false)}
-                    className="block px-2 py-2 rounded hover:bg-slate-50 text-sm"
-                  >
-                    Contact us
-                  </Link>
-                </div>
-              </div>
-            ) : (
-              <Link
-                to="/login"
-                onClick={() => setIsMenuOpen(false)}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 text-sky-700"
-              >
-                <LogIn className="w-5 h-5" />
-                Log in / Create account
-              </Link>
-            )}
+            {/* /RIGHT */}
           </div>
         </div>
-      )}
+      </header>
 
+      {/* Cart drawer (old header logic) */}
       <CartDrawer
         open={cartOpen}
         onClose={() => {
           setCartOpen(false);
-          // refresh cart count when drawer closes (e.g., after removals)
-          if (pb.authStore.isValid) {
-            findOpenCart(false)
-              .then((c) => setCartCount(countTestsInCart(c)))
-              .catch(() => setCartCount(0));
-          }
+          refreshCartCount(); // refresh count after removals
         }}
       />
-    </header>
+    </>
   );
-};
+}
 
-export default Header;
-
-/* -------------------------------- CartDrawer ------------------------------- */
+/* -------------------------------------------------------------------------- */
+/*                                 CartDrawer                                 */
+/* -------------------------------------------------------------------------- */
 function formatUSD(n) {
   const v = Number.parseFloat(n ?? 0);
   if (Number.isNaN(v)) return "—";
@@ -517,11 +367,12 @@ function CartDrawer({ open, onClose }) {
 
     (async () => {
       if (!open) return;
+
       setError("");
       setLoading(true);
       try {
         if (!pb.authStore.isValid || !pb.authStore.model) {
-          navigate("/login");
+          navigate("/login/signin");
           return;
         }
 
@@ -563,8 +414,8 @@ function CartDrawer({ open, onClose }) {
       const current = Array.isArray(cart.test)
         ? cart.test.slice()
         : cart.test
-        ? [cart.test]
-        : [];
+          ? [cart.test]
+          : [];
 
       const next = current.filter((id) => id !== testId);
 
@@ -597,18 +448,19 @@ function CartDrawer({ open, onClose }) {
 
   return (
     <>
-      {/* backdrop */}
+      {/* Backdrop */}
       <div
-        className={`fixed inset-0 bg-black/30 transition-opacity ${
+        className={`fixed inset-0 bg-black/30 transition-opacity z-[60] ${
           open
             ? "opacity-100 pointer-events-auto"
             : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}
       />
-      {/* drawer */}
+
+      {/* Drawer */}
       <aside
-        className={`fixed right-0 top-0 h-full w-full sm:w-[440px] bg-white shadow-xl border-l border-slate-200 transform transition-transform ${
+        className={`fixed right-0 top-0 h-full w-full sm:w-[440px] bg-white shadow-xl border-l border-slate-200 transform transition-transform z-[61] ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
         role="dialog"
@@ -671,7 +523,7 @@ function CartDrawer({ open, onClose }) {
           </ul>
         </div>
 
-        {/* totals & actions */}
+        {/* Totals & Actions */}
         <div className="border-t border-slate-200 p-4 space-y-2">
           <div className="flex justify-between text-sm text-slate-700">
             <span>Subtotal</span>

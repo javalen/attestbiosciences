@@ -1,15 +1,10 @@
+// AuthPage.jsx (DROP-IN) — match "Account sign in" screenshot styling
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  LogIn,
-  UserPlus,
-  ShoppingCart,
-  Loader2,
-  CheckCircle2,
-  AlertCircle,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
 import pb from "@/db/pocketbase";
 import PlacesAddressInput from "@/components/PlacesAddressInput";
+import { useParams } from "react-router-dom";
 
 /**
  * AuthPage.jsx (API SERVER VERSION)
@@ -22,12 +17,8 @@ import PlacesAddressInput from "@/components/PlacesAddressInput";
 
 const API_URL = String(import.meta.env.VITE_PUBLIC_API_BASE || "").replace(
   /\/+$/,
-  ""
+  "",
 );
-
-function classNames(...c) {
-  return c.filter(Boolean).join(" ");
-}
 
 async function apiFetch(path, { method = "GET", body, token } = {}) {
   if (!API_URL) throw new Error("Missing VITE_PUBLIC_API_BASE");
@@ -40,7 +31,6 @@ async function apiFetch(path, { method = "GET", body, token } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  // try to parse JSON error payloads cleanly
   const text = await res.text();
   let json = null;
   try {
@@ -61,31 +51,17 @@ async function apiFetch(path, { method = "GET", body, token } = {}) {
   return json ?? {};
 }
 
-async function fetchOpenCartCountViaApi() {
-  try {
-    const token = pb.authStore?.token;
-    if (!token) return 0;
-
-    const res = await apiFetch("/api/cart/open-count", { token });
-    return Number(res?.count || 0) || 0;
-  } catch {
-    return 0;
-  }
-}
-
 export default function AuthPage() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState("signin"); // 'signin' | 'signup'
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [cartCount, setCartCount] = useState(0);
-  const [successMsg, setSuccessMsg] = useState("");
 
-  // shared fields
+  // shared
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // signup-only fields
+  // signup-only
   const [fname, setFname] = useState("");
   const [lname, setLname] = useState("");
   const [phone, setPhone] = useState("");
@@ -98,22 +74,26 @@ export default function AuthPage() {
     return u.name || u.username || u.email || "Account";
   }, [loggedIn]);
 
+  const { mode: routeMode } = useParams();
+  const [mode, setMode] = useState(
+    routeMode === "signup" ? "signup" : "signin",
+  );
+
   useEffect(() => {
-    (async () => {
-      if (!loggedIn) return;
-      const c = await fetchOpenCartCountViaApi();
-      setCartCount(c);
-    })();
+    if (routeMode === "signup") setMode("signup");
+    else setMode("signin");
+  }, [routeMode]);
+
+  useEffect(() => {
+    // optional: if already logged in, you can redirect or keep as-is
   }, [loggedIn]);
 
   async function handleSignIn(e) {
     e.preventDefault();
     setError("");
-    setSuccessMsg("");
     setLoading(true);
 
     try {
-      // API server signs in against PB and returns { token, record }
       const res = await apiFetch("/api/auth/signin", {
         method: "POST",
         body: { email: email.trim(), password },
@@ -122,20 +102,11 @@ export default function AuthPage() {
       const token = res?.token;
       const record = res?.record;
 
-      if (!token || !record?.id) {
-        throw new Error("Invalid auth response from server.");
-      }
+      if (!token || !record?.id) throw new Error("Invalid auth response.");
 
-      // ✅ Keep PocketBase client in sync for the rest of your app
       pb.authStore.save(token, record);
 
-      // optional: cart count (don’t block redirect)
-      const after = fetchOpenCartCountViaApi()
-        .then(setCartCount)
-        .catch(() => {});
-
       navigate("/tests", { replace: true });
-      await after;
     } catch (err) {
       setError(err?.message || "Failed to sign in.");
     } finally {
@@ -146,11 +117,9 @@ export default function AuthPage() {
   async function handleSignUp(e) {
     e.preventDefault();
     setError("");
-    setSuccessMsg("");
     setLoading(true);
 
     try {
-      // API server creates PB user and returns { token, record }
       const res = await apiFetch("/api/auth/signup", {
         method: "POST",
         body: {
@@ -166,18 +135,11 @@ export default function AuthPage() {
       const token = res?.token;
       const record = res?.record;
 
-      if (!token || !record?.id) {
-        throw new Error("Invalid signup response from server.");
-      }
+      if (!token || !record?.id) throw new Error("Invalid signup response.");
 
       pb.authStore.save(token, record);
 
-      const after = fetchOpenCartCountViaApi()
-        .then(setCartCount)
-        .catch(() => {});
-
       navigate("/tests", { replace: true });
-      await after;
     } catch (err) {
       setError(err?.message || "Failed to create account.");
     } finally {
@@ -185,208 +147,235 @@ export default function AuthPage() {
     }
   }
 
+  // underline input style (matches screenshot)
+  const inputBase =
+    "w-full bg-transparent outline-none text-[16px] text-slate-900 placeholder:text-slate-400";
+  const underlineWrap = "border-b border-slate-400/90 py-2";
+  const labelText = "text-[15px] text-slate-800";
+
   return (
-    <section className="min-h-[70vh] bg-white">
-      <div className="container mx-auto px-4 lg:px-8 py-12 max-w-3xl">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-sky-900">
-            {mode === "signin" ? "Sign in" : "Create your account"}
-          </h1>
-          <div className="flex items-center gap-2 text-slate-600">
-            <ShoppingCart className="w-5 h-5" />
-            <span className="text-sm">
-              Cart:{" "}
-              <span className="font-semibold text-slate-900">{cartCount}</span>{" "}
-              test{cartCount === 1 ? "" : "s"}
-            </span>
-          </div>
+    <section className="bg-white">
+      {/* generous whitespace + centered like screenshot */}
+      <div className="mx-auto min-h-[76vh] max-w-[840px] px-6 pt-[96px] pb-[120px] flex flex-col items-center">
+        <h1 className="text-[13px] tracking-[0.28em] font-semibold text-slate-900 uppercase">
+          {mode === "signin" ? "Account sign in" : "Create account"}
+        </h1>
+
+        <div className="mt-[44px] w-full max-w-[680px] text-center">
+          <p className="mx-auto max-w-[560px] text-[15px] leading-[1.7] text-slate-700">
+            {mode === "signin"
+              ? "Sign in to your account to access your profile, history, and any private pages you've been granted access to."
+              : "Create your account to save orders, view your history, and access any private pages you've been granted access to."}
+          </p>
         </div>
 
-        {/* Tabs */}
-        <div className="mt-6 inline-flex rounded-xl border border-slate-200 p-1 bg-slate-50">
-          <button
-            onClick={() => setMode("signin")}
-            className={classNames(
-              "px-4 py-2 rounded-lg text-sm flex items-center gap-2",
-              mode === "signin"
-                ? "bg-white border border-slate-200"
-                : "hover:bg-white/60"
-            )}
-          >
-            <LogIn className="w-4 h-4" /> Sign in
-          </button>
-          <button
-            onClick={() => setMode("signup")}
-            className={classNames(
-              "px-4 py-2 rounded-lg text-sm flex items-center gap-2",
-              mode === "signup"
-                ? "bg-white border border-slate-200"
-                : "hover:bg-white/60"
-            )}
-          >
-            <UserPlus className="w-4 h-4" /> Create account
-          </button>
-        </div>
-
-        {/* Alerts */}
+        {/* error */}
         {error && (
-          <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-red-800">
-            <AlertCircle className="w-5 h-5 mt-0.5" />
-            <div className="text-sm">{error}</div>
-          </div>
-        )}
-        {successMsg && (
-          <div className="mt-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-800">
-            <CheckCircle2 className="w-5 h-5 mt-0.5" />
-            <div className="text-sm">{successMsg}</div>
+          <div className="mt-6 w-full max-w-[680px] text-center">
+            <p className="text-[14px] text-red-700">{error}</p>
           </div>
         )}
 
-        {/* Forms */}
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {/* form */}
+        <div className="mt-[34px] w-full max-w-[680px]">
           {mode === "signin" ? (
-            <form onSubmit={handleSignIn} className="p-6 grid gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                />
-              </div>
-              <button
-                disabled={loading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 text-white px-4 py-2.5 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-300"
-              >
-                {loading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <LogIn className="w-4 h-4" />
-                )}{" "}
-                Sign in
-              </button>
-              {loggedIn && (
-                <div className="text-sm text-slate-600">
-                  Signed in as{" "}
-                  <span className="font-medium text-slate-900">
-                    {displayName}
-                  </span>
-                  .
+            <form onSubmit={handleSignIn} className="space-y-[34px]">
+              <div className="space-y-2">
+                <div className={labelText}>Email</div>
+                <div className={underlineWrap}>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className={inputBase}
+                  />
                 </div>
-              )}
+              </div>
+
+              <div className="space-y-2">
+                <div className={labelText}>Password</div>
+                <div className={underlineWrap}>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className={inputBase}
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col items-center">
+                <button
+                  disabled={loading}
+                  className="
+                    inline-flex items-center justify-center
+                    h-[46px] px-10
+                    border-2 border-black
+                    rounded-full
+                    text-[12px] font-semibold uppercase
+                    tracking-[0.26em]
+                    hover:bg-black hover:text-white
+                    transition-colors duration-200
+                    disabled:opacity-60 disabled:cursor-not-allowed
+                  "
+                >
+                  {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  Sign in
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    // optional: wire to your reset flow later
+                    // navigate("/reset-password");
+                  }}
+                  className="mt-5 text-[14px] text-slate-600 hover:text-slate-900"
+                >
+                  Reset password
+                </button>
+
+                <div className="mt-10 text-[15px] text-slate-700">
+                  Not a member?{" "}
+                  <button
+                    type="button"
+                    onClick={() => setMode("signup")}
+                    className="text-slate-800 underline underline-offset-4 hover:text-black"
+                  >
+                    Create account.
+                  </button>
+                </div>
+
+                {loggedIn && (
+                  <div className="mt-6 text-[13px] text-slate-500">
+                    Signed in as{" "}
+                    <span className="text-slate-700">{displayName}</span>
+                  </div>
+                )}
+              </div>
             </form>
           ) : (
-            <form onSubmit={handleSignUp} className="p-6 grid gap-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700">
-                    First name
-                  </label>
+            <form onSubmit={handleSignUp} className="space-y-[28px]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                <div className="space-y-2">
+                  <div className={labelText}>First name</div>
+                  <div className={underlineWrap}>
+                    <input
+                      value={fname}
+                      onChange={(e) => setFname(e.target.value)}
+                      required
+                      className={inputBase}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className={labelText}>Last name</div>
+                  <div className={underlineWrap}>
+                    <input
+                      value={lname}
+                      onChange={(e) => setLname(e.target.value)}
+                      required
+                      className={inputBase}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className={labelText}>Phone</div>
+                <div className={underlineWrap}>
                   <input
-                    value={fname}
-                    onChange={(e) => setFname(e.target.value)}
-                    required
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className={inputBase}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700">
-                    Last name
-                  </label>
+              </div>
+
+              <div className="space-y-2">
+                <div className={labelText}>Email</div>
+                <div className={underlineWrap}>
                   <input
-                    value={lname}
-                    onChange={(e) => setLname(e.target.value)}
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     required
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                    className={inputBase}
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Phone
-                </label>
-                <input
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Address
-                </label>
-                <PlacesAddressInput
-                  value={addressObj}
-                  onChange={setAddressObj}
-                  restrictCountry="us"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  Powered by Google Places.
+              <div className="space-y-2">
+                <div className={labelText}>Password</div>
+                <div className={underlineWrap}>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    className={inputBase}
+                  />
+                </div>
+                <p className="text-[12px] text-slate-500 mt-2">
+                  Must be at least 8 characters.
                 </p>
               </div>
 
-              <button
-                disabled={loading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 text-white px-4 py-2.5 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-300"
-              >
-                {loading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <UserPlus className="w-4 h-4" />
-                )}{" "}
-                Create account
-              </button>
+              <div className="space-y-2">
+                <div className={labelText}>Address</div>
+                <div className="pt-1">
+                  <PlacesAddressInput
+                    value={addressObj}
+                    onChange={setAddressObj}
+                    restrictCountry="us"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col items-center">
+                <button
+                  disabled={loading}
+                  className="
+                    inline-flex items-center justify-center
+                    h-[46px] px-10
+                    border-2 border-black
+                    rounded-full
+                    text-[12px] font-semibold uppercase
+                    tracking-[0.26em]
+                    hover:bg-black hover:text-white
+                    transition-colors duration-200
+                    disabled:opacity-60 disabled:cursor-not-allowed
+                  "
+                >
+                  {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : null}
+                  Create account
+                </button>
+
+                <div className="mt-10 text-[15px] text-slate-700">
+                  Already a member?{" "}
+                  <button
+                    type="button"
+                    onClick={() => setMode("signin")}
+                    className="text-slate-800 underline underline-offset-4 hover:text-black"
+                  >
+                    Sign in.
+                  </button>
+                </div>
+              </div>
             </form>
           )}
         </div>
 
-        <div className="mt-6 text-sm text-slate-600">
-          <Link to="/tests" className="text-sky-700 hover:underline">
+        {/* optional footer link (kept subtle) */}
+        <div className="mt-10 text-[13px] text-slate-500">
+          <Link to="/tests" className="hover:text-slate-800">
             Browse tests
           </Link>
         </div>

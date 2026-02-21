@@ -28,7 +28,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 
-import AdvisoryTeam from "./AdvisoryTeam";
+import AdvisoryTeam from "../components/AdvisoryTeam";
 
 // ✅ New data layer import (adjust path if your file differs)
 import { fetchTeams } from "@/data/teams";
@@ -301,7 +301,8 @@ function TeamAccordion({ label, open, onToggle, children }) {
   );
 }
 
-export default function TeamSection({ title = "Meet the Team" }) {
+export default function Team({ title = "Meet the Team" }) {
+  console.log("Rendering Team");
   const [teams, setTeams] = useState([]); // [{ id, title, order, members: TeamMember[] }]
   const [openTeamIds, setOpenTeamIds] = useState(() => new Set());
   const [loading, setLoading] = useState(true);
@@ -388,7 +389,10 @@ export default function TeamSection({ title = "Meet the Team" }) {
   };
 
   return (
-    <section id="team" className="scroll-mt-20 bg-sky-50 py-16 px-6 sm:px-10">
+    <section
+      id="team"
+      className="scroll-mt-20 bg-sky-50 py-16 px-6 sm:px-10 mt-14"
+    >
       {/* Header */}
       <div className="mb-8 flex flex-col gap-2">
         <div className="flex items-center gap-2">
