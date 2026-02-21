@@ -7,6 +7,7 @@ import Contacts from "./pages/Contacts";
 import { TestsIndex } from "./components/TestComponent";
 import { TestDetail } from "./components/TestComponent";
 import AuthPage from "./components/AuthPage";
+import AdminPanel from "./components/AdminPanel";
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/tests/:id" element={<TestDetail />} />
         <Route path="/tests" element={<TestsIndex />} />
         <Route path="/login/:mode" element={<AuthPage />} />
+        <Route path="/admin" element={<AdminPanel />} />
       </Route>
     </Routes>
   );

@@ -6,6 +6,14 @@ export default function Contacts() {
   const [mode, setMode] = useState("intro");
 
   const isForm = mode === "form";
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    message: "",
+    signup: false,
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   // ESC closes form back to intro
   useEffect(() => {
@@ -113,9 +121,65 @@ export default function Contacts() {
                   </h2>
 
                   <form
-                    onSubmit={(e) => {
+                    onSubmit={async (e) => {
                       e.preventDefault();
-                      setMode("intro");
+                      setLoading(true);
+                      setError("");
+
+                      try {
+                        // 1️⃣ Send email
+                        // await fetch(
+                        //   `${import.meta.env.VITE_PUBLIC_API_BASE}/api/contact/send`,
+                        //   {
+                        //     method: "POST",
+                        //     headers: { "Content-Type": "application/json" },
+                        //     body: JSON.stringify({
+                        //       name: formData.name,
+                        //       email: formData.email,
+                        //       message: formData.message,
+                        //     }),
+                        //   },
+                        // ).then((r) => {
+                        //   if (!r.ok) throw new Error("Failed to send message.");
+                        // });
+
+                        // 2️⃣ If signup checked, join mailing list
+                        if (formData.signup) {
+                          const [fname, ...rest] = formData.name.split(" ");
+                          const lname = rest.join(" ") || "";
+
+                          await fetch(
+                            `${import.meta.env.VITE_PUBLIC_API_BASE}/api/mailing-list/join`,
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                fname,
+                                lname,
+                                email: formData.email,
+                                phone: "",
+                              }),
+                            },
+                          ).then((r) => {
+                            if (!r.ok)
+                              throw new Error("Failed mailing list signup.");
+                          });
+                        }
+
+                        // Success
+                        setFormData({
+                          name: "",
+                          email: "",
+                          message: "",
+                          signup: false,
+                        });
+
+                        setMode("intro");
+                      } catch (err) {
+                        setError(err.message);
+                      } finally {
+                        setLoading(false);
+                      }
                     }}
                     className="space-y-10"
                   >
@@ -127,6 +191,10 @@ export default function Contacts() {
                         className="w-full border-b border-black/40 focus:border-black outline-none py-2"
                         type="text"
                         required
+                        value={formData.name}
+                        onChange={(e) =>
+                          setFormData({ ...formData, name: e.target.value })
+                        }
                       />
                     </div>
 
@@ -138,6 +206,10 @@ export default function Contacts() {
                         className="w-full border-b border-black/40 focus:border-black outline-none py-2"
                         type="email"
                         required
+                        value={formData.email}
+                        onChange={(e) =>
+                          setFormData({ ...formData, email: e.target.value })
+                        }
                       />
                     </div>
 
@@ -148,11 +220,22 @@ export default function Contacts() {
                       <textarea
                         className="w-full border-b border-black/40 focus:border-black outline-none py-2 min-h-[100px] resize-none"
                         required
+                        value={formData.message}
+                        onChange={(e) =>
+                          setFormData({ ...formData, message: e.target.value })
+                        }
                       />
                     </div>
 
                     <label className="flex items-center justify-center gap-3 text-[13px] text-black/70">
-                      <input type="checkbox" className="h-4 w-4" />
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={formData.signup}
+                        onChange={(e) =>
+                          setFormData({ ...formData, signup: e.target.checked })
+                        }
+                      />
                       Sign up for our email list for updates, promotions, and
                       more.
                     </label>
@@ -165,9 +248,10 @@ export default function Contacts() {
                     <div className="pt-2 flex justify-center">
                       <button
                         type="submit"
-                        className="px-14 py-3 border-2 border-black rounded-full tracking-[0.25em] text-[11px] font-semibold uppercase hover:bg-black hover:text-white transition-all duration-200"
+                        disabled={loading}
+                        className="px-14 py-3 border-2 border-black rounded-full tracking-[0.25em] text-[11px] font-semibold uppercase hover:bg-black hover:text-white transition-all duration-200 disabled:opacity-50"
                       >
-                        Send
+                        {loading ? "Sending..." : "Send"}
                       </button>
                     </div>
                   </form>

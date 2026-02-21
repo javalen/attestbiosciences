@@ -202,13 +202,13 @@ function computeStartISO(rangeKey) {
 
 /* ---------- Menu ---------- */
 const MENU = [
-  { key: "pages", label: "Pages" },
+  // { key: "pages", label: "Pages" },
   { key: "ws_users", label: "Users" },
   { key: "teams", label: "Teams" },
   { key: "test", label: "Tests" },
   { key: "test_category", label: "Test Categories" },
   { key: "cart", label: "Carts" },
-  { key: "testimonial", label: "Testimonials" },
+  // { key: "testimonial", label: "Testimonials" },
   { key: "mailing_list", label: "Mailing List" }, // ✅ NEW
 ];
 
@@ -1843,7 +1843,7 @@ function CollectionCrudView({ collection }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3">
-        {collection === "pages" && (
+        {/* {collection === "pages" && (
           <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
             <input
               type="checkbox"
@@ -1866,12 +1866,12 @@ function CollectionCrudView({ collection }) {
               <span className="ml-2 text-xs text-slate-500">Saving…</span>
             )}
           </label>
-        )}
+        )} */}
 
-        <UIButton onClick={openAdd}>
+        {/* <UIButton onClick={openAdd}>
           <Plus className="h-4 w-4" />
           Add New
-        </UIButton>
+        </UIButton> */}
       </div>
 
       <div className="rounded-xl border border-slate-200 overflow-hidden">
@@ -2109,7 +2109,7 @@ export default function AdminPanel() {
   const [active, setActive] = useState("pages");
   const [ready, setReady] = useState(false);
   const navigate = useNavigate();
-
+  console.log("AdminPanel rendered", pb.authStore);
   useEffect(() => {
     const run = async () => {
       try {
@@ -2137,7 +2137,7 @@ export default function AdminPanel() {
   const title = MENU.find((m) => m.key === active)?.label || active;
 
   return (
-    <div className="flex h-[calc(100vh-120px)] min-h-[520px] gap-5">
+    <div className="flex h-[calc(100vh-120px)] min-h-[520px] gap-5 mt-26">
       <SideNav active={active} onSelect={setActive} />
 
       <main className="flex-1 rounded-2xl border border-slate-200 bg-white p-4">

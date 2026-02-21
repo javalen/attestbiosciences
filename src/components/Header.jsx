@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Search, ShoppingCart, User, Loader2, Trash2 } from "lucide-react";
 import pb from "@/db/pocketbase";
+import abLogo from "@/assets/ab-logo.png"; // ✅ ADD THIS
 
 /* -------------------------------------------------------------------------- */
 /*                                API helpers                                 */
@@ -92,6 +93,10 @@ export default function Header() {
   const isHome = location.pathname === "/";
   const isLoggedIn = pb.authStore.isValid && !!pb.authStore.model;
 
+  // ✅ NEW: current user + admin flag
+  const user = pb.authStore.model;
+  const isAdmin = !!user?.isAdmin;
+
   const [openAccount, setOpenAccount] = useState(false);
   const menuRef = useRef(null);
 
@@ -169,7 +174,26 @@ export default function Header() {
           ${isHome ? "bg-transparent" : "bg-black"}
         `}
       >
-        <div className="px-[56px] pt-[26px] pb-[18px]">
+        {/* ✅ Logo pinned top-left */}
+        <NavLink
+          to="/"
+          aria-label="Home"
+          className="
+            absolute left-[24px] top-[8px]
+            z-[55]
+            flex items-center
+          "
+        >
+          <img
+            src={abLogo}
+            alt="Attest BioSciences"
+            className="h-[72px] w-auto  mb2"
+            draggable={false}
+          />
+        </NavLink>
+
+        {/* add left padding so nav doesn't collide with logo */}
+        <div className="px-[56px] pt-[26px] pb-[18px] pl-[140px]">
           <div className="flex items-center justify-between">
             {/* LEFT */}
             <nav className="flex items-center gap-[56px]">
@@ -308,9 +332,25 @@ export default function Header() {
                         >
                           Orders
                         </button>
+
                         <button className={menuItem} type="button">
                           My Account
                         </button>
+
+                        {/* ✅ NEW: Admin link only for admins */}
+                        {isAdmin && (
+                          <NavLink
+                            to="/admin"
+                            onClick={() => setOpenAccount(false)}
+                          >
+                            {({ isActive }) => (
+                              <span className={menuItem}>
+                                {isActive && <span className="mr-2">-</span>}
+                                Admin Panel
+                              </span>
+                            )}
+                          </NavLink>
+                        )}
 
                         <div className="my-4 h-px bg-white/10" />
 
