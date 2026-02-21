@@ -245,13 +245,13 @@ export default function Header() {
 
             {/* RIGHT */}
             <div className="flex items-center gap-[22px] text-white/80">
-              <button
+              {/* <button
                 type="button"
                 aria-label="Search"
                 className="hover:text-white transition-colors duration-200"
               >
                 <Search size={18} strokeWidth={1.4} />
-              </button>
+              </button> */}
 
               {/* Cart (old logic) */}
               {isLoggedIn && (
