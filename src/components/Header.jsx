@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { Search, ShoppingCart, User, Loader2, Trash2 } from "lucide-react";
+import { Menu, X, ShoppingCart, User, Loader2, Trash2 } from "lucide-react";
 import pb from "@/db/pocketbase";
-import abLogo from "@/assets/ab-logo.png"; // ✅ ADD THIS
+import abLogo from "@/assets/ab-logo.png";
 
 /* -------------------------------------------------------------------------- */
 /*                                API helpers                                 */
@@ -12,9 +12,7 @@ const DATA_SERVER_BASE = String(
 ).replace(/\/+$/, "");
 
 async function apiFetch(path, { method = "GET", body, signal } = {}) {
-  if (!DATA_SERVER_BASE) {
-    throw new Error("Missing VITE_PUBLIC_API_BASE");
-  }
+  if (!DATA_SERVER_BASE) throw new Error("Missing VITE_PUBLIC_API_BASE");
 
   const headers = { "Content-Type": "application/json" };
 
@@ -65,6 +63,9 @@ async function findOpenCart(expand = false, signal) {
 const navLinkBase =
   "text-white hover:text-white transition-colors duration-200 text-[16px] tracking-[0.16em] font-bold h-[40px] flex items-center";
 
+const navLinkMobile =
+  "block w-full text-left text-white hover:text-white transition-colors duration-150 text-[15px] tracking-[0.16em] font-bold py-3";
+
 const menuItem =
   "block w-full text-left text-white hover:text-white transition-colors duration-150 text-[13px] tracking-[0.18em] font-semibold py-2";
 
@@ -93,14 +94,16 @@ export default function Header() {
   const isHome = location.pathname === "/";
   const isLoggedIn = pb.authStore.isValid && !!pb.authStore.model;
 
-  // ✅ NEW: current user + admin flag
   const user = pb.authStore.model;
   const isAdmin = !!user?.isAdmin;
 
   const [openAccount, setOpenAccount] = useState(false);
   const menuRef = useRef(null);
 
+  const [openMobileNav, setOpenMobileNav] = useState(false);
+
   const [cartOpen, setCartOpen] = useState(false);
+  const [cartMode, setCartMode] = useState("cart"); // ✅ "cart" | "orders"
   const [cartCount, setCartCount] = useState(0);
 
   const openCart = () => {
@@ -110,11 +113,28 @@ export default function Header() {
       });
       return;
     }
+    setCartMode("cart");
     setCartOpen(true);
-    setOpenAccount(false); // close dropdown if coming from Orders
+    setOpenAccount(false);
   };
 
-  // Refresh cart count
+  const openOrders = () => {
+    if (!isLoggedIn) {
+      navigate("/login/signin", {
+        state: { redirectTo: location.pathname + location.search },
+      });
+      return;
+    }
+    setCartMode("orders"); // ✅ show orders inside drawer
+    setCartOpen(true);
+    setOpenAccount(false);
+  };
+
+  useEffect(() => {
+    setOpenMobileNav(false);
+    setOpenAccount(false);
+  }, [location.pathname]);
+
   const refreshCartCount = useCallback(async () => {
     if (!pb.authStore.isValid || !pb.authStore.model) {
       setCartCount(0);
@@ -128,7 +148,6 @@ export default function Header() {
     }
   }, []);
 
-  // On mount + on auth changes refresh cart count
   useEffect(() => {
     refreshCartCount();
     const unsub = pb.authStore.onChange(() => {
@@ -147,10 +166,12 @@ export default function Header() {
     navigate("/", { replace: true });
   };
 
-  // Close dropdown on outside click + ESC
   useEffect(() => {
     function onDown(e) {
-      if (e.key === "Escape") setOpenAccount(false);
+      if (e.key === "Escape") {
+        setOpenAccount(false);
+        setOpenMobileNav(false);
+      }
     }
     function onClick(e) {
       if (!openAccount) return;
@@ -174,92 +195,94 @@ export default function Header() {
           ${isHome ? "bg-transparent" : "bg-black"}
         `}
       >
-        {/* ✅ Logo pinned top-left */}
-        <NavLink
-          to="/"
-          aria-label="Home"
-          className="
-            absolute left-[24px] top-[8px]
-            z-[55]
-            flex items-center
-          "
-        >
-          <img
-            src={abLogo}
-            alt="Attest BioSciences"
-            className="h-[72px] w-auto  mb2"
-            draggable={false}
-          />
-        </NavLink>
-
-        {/* add left padding so nav doesn't collide with logo */}
-        <div className="px-[56px] pt-[26px] pb-[18px] pl-[140px]">
-          <div className="flex items-center justify-between">
-            {/* LEFT */}
-            <nav className="flex items-center gap-[56px]">
-              <NavLink to="/" end>
-                {({ isActive }) => (
-                  <span className={navLinkBase}>
-                    {isActive && <span className="mr-2">-</span>}
-                    Home
-                  </span>
-                )}
-              </NavLink>
-
-              <NavLink to="/about">
-                {({ isActive }) => (
-                  <span className={navLinkBase}>
-                    {isActive && <span className="mr-2">-</span>}
-                    About
-                  </span>
-                )}
-              </NavLink>
-
-              <NavLink to="/team">
-                {({ isActive }) => (
-                  <span className={navLinkBase}>
-                    {isActive && <span className="mr-2">-</span>}
-                    Team
-                  </span>
-                )}
-              </NavLink>
-
-              <NavLink to="/contact">
-                {({ isActive }) => (
-                  <span className={navLinkBase}>
-                    {isActive && <span className="mr-2">-</span>}
-                    Contact
-                  </span>
-                )}
-              </NavLink>
-
-              <NavLink to="/tests">
-                {({ isActive }) => (
-                  <span className={navLinkBase}>
-                    {isActive && <span className="mr-2">-</span>}
-                    Our Test
-                  </span>
-                )}
-              </NavLink>
-            </nav>
-
-            {/* RIGHT */}
-            <div className="flex items-center gap-[22px] text-white/80">
-              {/* <button
-                type="button"
-                aria-label="Search"
-                className="hover:text-white transition-colors duration-200"
+        <div className="px-4 sm:px-[56px] pt-3 sm:pt-[26px] pb-3 sm:pb-[18px]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <NavLink
+                to="/"
+                aria-label="Home"
+                className="flex items-center shrink-0"
               >
-                <Search size={18} strokeWidth={1.4} />
-              </button> */}
+                <img
+                  src={abLogo}
+                  alt="Attest BioSciences"
+                  className="h-[44px] sm:h-[72px] w-auto"
+                  draggable={false}
+                />
+              </NavLink>
 
-              {/* Cart (old logic) */}
+              <nav className="hidden md:flex items-center gap-[56px]">
+                <NavLink to="/" end>
+                  {({ isActive }) => (
+                    <span className={navLinkBase}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Home
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/about">
+                  {({ isActive }) => (
+                    <span className={navLinkBase}>
+                      {isActive && <span className="mr-2">-</span>}
+                      About
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/team">
+                  {({ isActive }) => (
+                    <span className={navLinkBase}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Team
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/contact">
+                  {({ isActive }) => (
+                    <span className={navLinkBase}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Contact
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/tests">
+                  {({ isActive }) => (
+                    <span className={navLinkBase}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Our Test
+                    </span>
+                  )}
+                </NavLink>
+              </nav>
+            </div>
+
+            <div className="flex items-center gap-3 sm:gap-[22px] text-white/80 shrink-0">
+              <button
+                type="button"
+                aria-label={openMobileNav ? "Close menu" : "Open menu"}
+                className="md:hidden hover:text-white transition-colors duration-200"
+                onClick={() => {
+                  setOpenMobileNav((v) => !v);
+                  setOpenAccount(false);
+                }}
+              >
+                {openMobileNav ? (
+                  <X size={20} strokeWidth={1.6} />
+                ) : (
+                  <Menu size={20} strokeWidth={1.6} />
+                )}
+              </button>
+
+              {/* Cart icon opens CART mode */}
               {isLoggedIn && (
                 <button
                   type="button"
                   aria-label="Cart"
                   className="relative hover:text-white transition-colors duration-200"
-                  onClick={() => setCartOpen(true)}
+                  onClick={openCart}
                   title="Cart"
                 >
                   <ShoppingCart size={18} strokeWidth={1.4} />
@@ -271,7 +294,6 @@ export default function Header() {
                 </button>
               )}
 
-              {/* Account dropdown */}
               <div className="relative" ref={menuRef}>
                 <button
                   type="button"
@@ -325,10 +347,11 @@ export default function Header() {
                       </>
                     ) : (
                       <>
+                        {/* ✅ Orders now opens the drawer in ORDERS mode */}
                         <button
                           className={menuItem}
                           type="button"
-                          onClick={openCart}
+                          onClick={openOrders}
                         >
                           Orders
                         </button>
@@ -337,7 +360,6 @@ export default function Header() {
                           My Account
                         </button>
 
-                        {/* ✅ NEW: Admin link only for admins */}
                         {isAdmin && (
                           <NavLink
                             to="/admin"
@@ -367,17 +389,67 @@ export default function Header() {
                 )}
               </div>
             </div>
-            {/* /RIGHT */}
           </div>
+
+          {openMobileNav && (
+            <div className="md:hidden mt-3 rounded-xl bg-[#0d0f12]/95 border border-white/5 shadow-[0_12px_30px_rgba(0,0,0,0.45)] overflow-hidden">
+              <nav className="px-4 py-3">
+                <NavLink to="/" end>
+                  {({ isActive }) => (
+                    <span className={navLinkMobile}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Home
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/about">
+                  {({ isActive }) => (
+                    <span className={navLinkMobile}>
+                      {isActive && <span className="mr-2">-</span>}
+                      About
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/team">
+                  {({ isActive }) => (
+                    <span className={navLinkMobile}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Team
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/contact">
+                  {({ isActive }) => (
+                    <span className={navLinkMobile}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Contact
+                    </span>
+                  )}
+                </NavLink>
+
+                <NavLink to="/tests">
+                  {({ isActive }) => (
+                    <span className={navLinkMobile}>
+                      {isActive && <span className="mr-2">-</span>}
+                      Our Test
+                    </span>
+                  )}
+                </NavLink>
+              </nav>
+            </div>
+          )}
         </div>
       </header>
 
-      {/* Cart drawer (old header logic) */}
       <CartDrawer
         open={cartOpen}
+        mode={cartMode} // ✅ pass mode down
         onClose={() => {
           setCartOpen(false);
-          refreshCartCount(); // refresh count after removals
+          refreshCartCount();
         }}
       />
     </>
@@ -394,7 +466,7 @@ function formatUSD(n) {
     return new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: "USD",
-      maximumFractionDigits: 0,
+      maximumFractionDigits: 2,
     }).format(v);
   } catch {
     return `$${v}`;
@@ -411,12 +483,45 @@ function displayFromCents(c) {
   return formatUSD((c || 0) / 100);
 }
 
-function CartDrawer({ open, onClose }) {
+/**
+ * Tax calc function (receives cents, returns cents)
+ * Update logic/rate as needed.
+ */
+function calcTax(subtotalCents) {
+  const rate = 0.0825; // e.g. 0.0825
+  return Math.round((subtotalCents || 0) * rate);
+}
+
+function discountToCents(discountValue, subtotalCents) {
+  const v = Number(discountValue);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+
+  if (v > 0 && v <= 1) return Math.round((subtotalCents || 0) * v); // fraction percent
+  if (v > 1 && v <= 100) return Math.round((subtotalCents || 0) * (v / 100)); // percent
+  return cents(v); // dollars
+}
+
+function CartDrawer({ open, onClose, mode = "cart" }) {
   const navigate = useNavigate();
+
   const [loading, setLoading] = useState(false);
   const [cart, setCart] = useState(null);
   const [error, setError] = useState("");
 
+  // Orders view state
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersErr, setOrdersErr] = useState("");
+  const [orders, setOrders] = useState([]);
+
+  // Discount state
+  const [discountCode, setDiscountCode] = useState("");
+  const [discountRec, setDiscountRec] = useState(null);
+  const [discountStatus, setDiscountStatus] = useState("");
+  const [discountLoading, setDiscountLoading] = useState(false);
+
+  const [purchaseSuccess, setPurchaseSuccess] = useState(null);
+
+  // Load cart or orders when drawer opens / mode changes
   useEffect(() => {
     const ac = new AbortController();
 
@@ -424,15 +529,44 @@ function CartDrawer({ open, onClose }) {
       if (!open) return;
 
       setError("");
+      setOrdersErr("");
+      setPurchaseSuccess(null);
+
+      if (!pb.authStore.isValid || !pb.authStore.model) {
+        navigate("/login/signin");
+        return;
+      }
+
+      if (mode === "orders") {
+        setOrdersLoading(true);
+        try {
+          // ✅ show the user's most recent orders
+          const list = await pb.collection("orders").getList(1, 25, {
+            filter: `user="${pb.authStore.model.id}"`,
+            sort: "-created",
+            expand: "tests,discount",
+            requestKey: null,
+          });
+          setOrders(list?.items || []);
+        } catch (e) {
+          setOrdersErr(e?.message || "Failed to load orders.");
+          setOrders([]);
+        } finally {
+          setOrdersLoading(false);
+        }
+        return;
+      }
+
+      // mode === "cart"
       setLoading(true);
       try {
-        if (!pb.authStore.isValid || !pb.authStore.model) {
-          navigate("/login/signin");
-          return;
-        }
-
-        const c = await findOpenCart(true /* expand */, ac.signal);
+        const c = await findOpenCart(true, ac.signal);
         setCart(c);
+
+        // reset discount UI each open cart
+        setDiscountCode("");
+        setDiscountRec(null);
+        setDiscountStatus("");
       } catch (e) {
         setError(e?.message || "Failed to load cart.");
       } finally {
@@ -441,14 +575,25 @@ function CartDrawer({ open, onClose }) {
     })();
 
     return () => ac.abort();
-  }, [open, navigate]);
+  }, [open, mode, navigate]);
 
   const tests = cart?.expand?.test ?? [];
-  const subtotalCents = tests.reduce((sum, t) => sum + cents(t.cost), 0);
-  const discountCents = 0;
-  const taxCents = 0;
+  const subtotalCents = useMemo(
+    () => tests.reduce((sum, t) => sum + cents(t.cost), 0),
+    [tests],
+  );
+
+  const discountCents = useMemo(() => {
+    if (!discountRec) return 0;
+    const dc = discountToCents(discountRec?.discount, subtotalCents);
+    return Math.min(dc, subtotalCents);
+  }, [discountRec, subtotalCents]);
+
+  const taxableBaseCents = Math.max(0, subtotalCents - discountCents);
+  const taxCents = useMemo(() => calcTax(taxableBaseCents), [taxableBaseCents]);
+
   const shippingCents = 0;
-  const totalCents = subtotalCents - discountCents + taxCents + shippingCents;
+  const totalCents = Math.max(0, taxableBaseCents + taxCents + shippingCents);
 
   async function updateCartTests(nextTestIds) {
     if (!cart) return null;
@@ -471,9 +616,7 @@ function CartDrawer({ open, onClose }) {
         : cart.test
           ? [cart.test]
           : [];
-
       const next = current.filter((id) => id !== testId);
-
       const updated = await updateCartTests(next);
       setCart(updated);
     } catch (e) {
@@ -490,6 +633,9 @@ function CartDrawer({ open, onClose }) {
     try {
       const updated = await updateCartTests([]);
       setCart(updated);
+      setDiscountRec(null);
+      setDiscountCode("");
+      setDiscountStatus("");
     } catch (e) {
       setError(e?.message || "Could not clear cart.");
     } finally {
@@ -500,6 +646,102 @@ function CartDrawer({ open, onClose }) {
   function goCheckout() {
     navigate("/checkout");
   }
+
+  async function applyDiscountCode() {
+    const code = String(discountCode || "").trim();
+    if (!code) {
+      setDiscountRec(null);
+      setDiscountStatus("");
+      return;
+    }
+
+    setDiscountLoading(true);
+    setDiscountStatus("");
+    try {
+      const safe = code.replace(/"/g, '\\"');
+      const rec = await pb
+        .collection("discount")
+        .getFirstListItem(`code="${safe}"`, { requestKey: null });
+
+      setDiscountRec(rec);
+
+      const dc = discountToCents(rec?.discount, subtotalCents);
+      setDiscountStatus(
+        dc > 0
+          ? `Discount applied (${formatUSD(dc / 100)}).`
+          : "Code found, but discount value is 0.",
+      );
+    } catch {
+      setDiscountRec(null);
+      setDiscountStatus("Invalid discount code.");
+    } finally {
+      setDiscountLoading(false);
+    }
+  }
+
+  function generateOrderNumber() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const rnd = Math.random().toString(16).slice(2, 6).toUpperCase();
+    return `ORD-${y}${m}${day}-${rnd}`;
+  }
+
+  async function purchase() {
+    // TODO: integrate Stripe/etc.
+    return { ok: true };
+  }
+
+  async function buyNow() {
+    if (!pb.authStore.isValid || !pb.authStore.model) {
+      navigate("/login/signin");
+      return;
+    }
+    if (!cart || tests.length === 0) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const result = await purchase();
+      if (!result?.ok) throw new Error("Purchase failed.");
+      const orderNumber = generateOrderNumber();
+      const orderPayload = {
+        tests: Array.isArray(cart.test)
+          ? cart.test
+          : cart.test
+            ? [cart.test]
+            : [],
+        subtotal: subtotalCents / 100,
+        tax: taxCents / 100, // ✅ NEW: store tax on order.tax
+        total: totalCents / 100,
+        user: pb.authStore.model.id,
+        order_number: orderNumber,
+        discount: discountRec?.id || null,
+      };
+
+      const created = await pb.collection("orders").create(orderPayload);
+
+      await updateCartTests([]);
+      setCart((prev) =>
+        prev
+          ? { ...prev, test: [], expand: { ...(prev.expand || {}), test: [] } }
+          : prev,
+      );
+
+      setDiscountRec(null);
+      setDiscountCode("");
+      setDiscountStatus("Purchase complete.");
+      setPurchaseSuccess({ orderNumber, orderId: created?.id || null });
+      //onClose?.();
+    } catch (e) {
+      setError(e?.message || "Purchase failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const title = mode === "orders" ? "Your orders" : "Your cart";
 
   return (
     <>
@@ -517,12 +759,13 @@ function CartDrawer({ open, onClose }) {
       <aside
         className={`fixed right-0 top-0 h-full w-full sm:w-[440px] bg-white shadow-xl border-l border-slate-200 transform transition-transform z-[61] ${
           open ? "translate-x-0" : "translate-x-full"
-        }`}
+        } flex flex-col`}
         role="dialog"
         aria-modal="true"
       >
-        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-200">
-          <h2 className="text-lg font-semibold">Your cart</h2>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-200 shrink-0">
+          <h2 className="text-lg font-semibold">{title}</h2>
           <button
             onClick={onClose}
             className="rounded-lg px-2 py-1 hover:bg-slate-100"
@@ -531,101 +774,278 @@ function CartDrawer({ open, onClose }) {
           </button>
         </div>
 
-        <div className="p-4 overflow-y-auto h-[calc(100%-160px)]">
-          {loading && (
-            <div className="flex items-center gap-2 text-slate-600">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-            </div>
-          )}
+        {/* ✅ SUCCESS BANNER (shows inside drawer) */}
+        {purchaseSuccess?.orderNumber && (
+          <div className="px-4 pt-4 shrink-0">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900 p-3">
+              <div className="font-semibold">Purchase complete ✅</div>
+              <div className="text-sm mt-1">
+                Order number:{" "}
+                <span className="font-mono font-semibold">
+                  {purchaseSuccess.orderNumber}
+                </span>
+              </div>
 
-          {error && (
-            <div className="mb-3 rounded-xl border border-red-200 bg-red-50 text-red-800 p-3 text-sm">
-              {error}
-            </div>
-          )}
-
-          {!loading && tests.length === 0 && (
-            <div className="text-slate-600">Your cart is empty.</div>
-          )}
-
-          <ul className="space-y-3">
-            {tests.map((t) => (
-              <li
-                key={t.id}
-                className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-3"
-              >
-                <div className="min-w-0">
-                  <div className="font-medium text-slate-900 truncate">
-                    {t.name}
-                  </div>
-                  <div className="text-sm text-slate-600 line-clamp-2">
-                    {t.description}
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-900">
-                    {formatUSD(t.cost)}
-                  </div>
-                </div>
+              <div className="mt-3 flex gap-2">
                 <button
-                  onClick={() => removeTest(t.id)}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm hover:bg-slate-50"
-                  title="Remove"
-                  disabled={loading}
+                  type="button"
+                  className="rounded-xl bg-emerald-700 text-white px-3 py-2 text-sm hover:bg-emerald-800"
+                  onClick={() => {
+                    // If you have an orders route, go there:
+                    // navigate(`/orders/${purchaseSuccess.orderId || ""}`);
+                    // Otherwise just close:
+                    onClose?.();
+                  }}
                 >
-                  <Trash2 className="w-4 h-4" /> Remove
+                  Done
                 </button>
-              </li>
-            ))}
-          </ul>
+
+                <button
+                  type="button"
+                  className="rounded-xl border border-emerald-300 px-3 py-2 text-sm hover:bg-emerald-100"
+                  onClick={() => setPurchaseSuccess(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Footer: only for CART mode AND only when not showing success (optional) */}
+        {mode === "cart" && !purchaseSuccess && (
+          <div className="border-t border-slate-200 p-4 space-y-3 shrink-0 bg-white">
+            {/* ...your existing totals + buttons... */}
+            {/* Buy Now button should call buyNow() */}
+          </div>
+        )}
+
+        {/* Content */}
+        <div className="p-4 overflow-y-auto flex-1 min-h-0">
+          {mode === "orders" ? (
+            <>
+              {ordersLoading && (
+                <div className="flex items-center gap-2 text-slate-600">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                </div>
+              )}
+
+              {ordersErr && (
+                <div className="mb-3 rounded-xl border border-red-200 bg-red-50 text-red-800 p-3 text-sm">
+                  {ordersErr}
+                </div>
+              )}
+
+              {!ordersLoading && orders.length === 0 && (
+                <div className="text-slate-600">No orders yet.</div>
+              )}
+
+              <ul className="space-y-3">
+                {orders.map((o) => {
+                  const oTests = o?.expand?.tests ?? [];
+                  const code = o?.expand?.discount?.discount;
+                  return (
+                    <li
+                      key={o.id}
+                      className="rounded-xl border border-slate-200 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900">
+                            {o.order_number || "Order"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {o.created
+                              ? new Date(o.created).toLocaleString()
+                              : ""}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-semibold text-slate-900">
+                            {formatUSD(o.total)}
+                          </div>
+                          {typeof o.tax !== "undefined" && (
+                            <div className="text-xs text-slate-600">
+                              Tax: {formatUSD(o.tax)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {code && (
+                        <div className="mt-2 text-xs text-slate-600">
+                          Discount: {formatUSD(o.subtotal / code)}
+                        </div>
+                      )}
+
+                      {Array.isArray(oTests) && oTests.length > 0 && (
+                        <div className="mt-2">
+                          <div className="text-xs font-semibold text-slate-700 mb-1">
+                            Items ({oTests.length})
+                          </div>
+                          <ul className="space-y-1">
+                            {oTests.map((t) => (
+                              <li
+                                key={t.id}
+                                className="flex justify-between text-sm text-slate-700"
+                              >
+                                <span className="truncate pr-2">{t.name}</span>
+                                <span className="text-slate-900">
+                                  {formatUSD(t.cost)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          ) : (
+            <>
+              {loading && (
+                <div className="flex items-center gap-2 text-slate-600">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                </div>
+              )}
+
+              {error && (
+                <div className="mb-3 rounded-xl border border-red-200 bg-red-50 text-red-800 p-3 text-sm">
+                  {error}
+                </div>
+              )}
+
+              {!loading && tests.length === 0 && (
+                <div className="text-slate-600">Your cart is empty.</div>
+              )}
+
+              <ul className="space-y-3">
+                {tests.map((t) => (
+                  <li
+                    key={t.id}
+                    className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-slate-900 truncate">
+                        {t.name}
+                      </div>
+                      <div className="text-sm text-slate-600 line-clamp-2">
+                        {t.description}
+                      </div>
+                      <div className="mt-1 text-sm font-semibold text-slate-900">
+                        {formatUSD(t.cost)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removeTest(t.id)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm hover:bg-slate-50"
+                      title="Remove"
+                      disabled={loading}
+                    >
+                      <Trash2 className="w-4 h-4" /> Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="h-3" />
+            </>
+          )}
         </div>
 
-        {/* Totals & Actions */}
-        <div className="border-t border-slate-200 p-4 space-y-2">
-          <div className="flex justify-between text-sm text-slate-700">
-            <span>Subtotal</span>
-            <span className="font-medium text-slate-900">
-              {displayFromCents(subtotalCents)}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm text-slate-700">
-            <span>Discounts</span>
-            <span className="font-medium text-slate-900">
-              {displayFromCents(discountCents)}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm text-slate-700">
-            <span>Tax</span>
-            <span className="font-medium text-slate-900">
-              {displayFromCents(taxCents)}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm text-slate-700">
-            <span>Shipping</span>
-            <span className="font-medium text-slate-900">
-              {displayFromCents(shippingCents)}
-            </span>
-          </div>
-          <div className="flex justify-between text-base font-semibold text-slate-900 pt-1">
-            <span>Total</span>
-            <span>{displayFromCents(totalCents)}</span>
-          </div>
+        {/* Footer: only for CART mode */}
+        {mode === "cart" && (
+          <div className="border-t border-slate-200 p-4 space-y-3 shrink-0 bg-white">
+            <div className="flex justify-between text-sm text-slate-700">
+              <span>Subtotal</span>
+              <span className="font-medium text-slate-900">
+                {displayFromCents(subtotalCents)}
+              </span>
+            </div>
 
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <button
-              onClick={clearCart}
-              disabled={tests.length === 0 || loading}
-              className="rounded-xl border border-slate-300 px-3 py-2 hover:bg-slate-50 disabled:opacity-60"
-            >
-              Clear
-            </button>
-            <button
-              onClick={goCheckout}
-              disabled={tests.length === 0}
-              className="rounded-xl bg-sky-600 text-white px-3 py-2 hover:bg-sky-700 disabled:opacity-60"
-            >
-              Checkout
-            </button>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-sm text-slate-700">
+                <span>Discount code</span>
+                <span className="font-medium text-slate-900">
+                  {discountCents > 0
+                    ? `- ${displayFromCents(discountCents)}`
+                    : displayFromCents(0)}
+                </span>
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  value={discountCode}
+                  onChange={(e) => setDiscountCode(e.target.value)}
+                  placeholder="Enter code"
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+                  disabled={loading}
+                  autoCapitalize="characters"
+                />
+                <button
+                  type="button"
+                  onClick={applyDiscountCode}
+                  disabled={loading || discountLoading}
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
+                  title="Apply"
+                >
+                  {discountLoading ? "…" : "Apply"}
+                </button>
+              </div>
+
+              {discountStatus && (
+                <div className="text-xs text-slate-600">{discountStatus}</div>
+              )}
+            </div>
+
+            <div className="flex justify-between text-sm text-slate-700">
+              <span>Tax</span>
+              <span className="font-medium text-slate-900">
+                {displayFromCents(taxCents)}
+              </span>
+            </div>
+
+            <div className="flex justify-between text-sm text-slate-700">
+              <span>Shipping</span>
+              <span className="font-medium text-slate-900">
+                {displayFromCents(shippingCents)}
+              </span>
+            </div>
+
+            <div className="flex justify-between text-base font-semibold text-slate-900 pt-1">
+              <span>Total</span>
+              <span>{displayFromCents(totalCents)}</span>
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <button
+                onClick={clearCart}
+                disabled={tests.length === 0 || loading}
+                className="rounded-xl border border-slate-300 px-3 py-2 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Clear
+              </button>
+
+              {/* <button
+                onClick={goCheckout}
+                disabled={tests.length === 0 || loading}
+                className="rounded-xl bg-sky-600 text-white px-3 py-2 hover:bg-sky-700 disabled:opacity-60"
+              >
+                Checkout
+              </button> */}
+
+              <button
+                onClick={buyNow}
+                disabled={tests.length === 0 || loading}
+                className="rounded-xl bg-sky-600 text-white px-3 py-2 hover:bg-sky-700 disabled:opacity-60"
+              >
+                {loading ? "Processing…" : "Buy Now"}
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </aside>
     </>
   );

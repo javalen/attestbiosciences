@@ -161,7 +161,7 @@ export function TestsIndex() {
   }
 
   return (
-    <section className="min-h-[70vh] bg-white mt-10">
+    <section className="min-h-[70vh] bg-white mt-20">
       <div className="container mx-auto px-4 lg:px-8 py-12">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
