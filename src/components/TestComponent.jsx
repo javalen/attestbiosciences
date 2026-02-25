@@ -31,6 +31,10 @@ const formatUSD = (val) => {
   }
 };
 
+function emitCartUpdated() {
+  window.dispatchEvent(new CustomEvent("cart:updated"));
+}
+
 const truncate = (text, n = 120) =>
   text && text.length > n ? text.slice(0, n - 1) + "…" : text || "";
 
@@ -404,12 +408,18 @@ export function TestDetail() {
   async function handleAddToCart() {
     setAddMsg("");
     setAddErr("");
+
     if (!pb.authStore.isValid || !pb.authStore.model) {
       return navigate("/login", { state: { redirectTo: `/tests/${id}` } });
     }
+
     try {
       setAdding(true);
       const { already } = await addTestToCart(pb.authStore.model.id, item.id);
+
+      // ✅ NEW: tell header to refresh badge
+      emitCartUpdated();
+
       setAddMsg(already ? "Already in your cart." : "Added to your cart.");
     } catch (e) {
       setAddErr(e?.message || "Could not add to cart.");

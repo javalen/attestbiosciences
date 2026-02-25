@@ -149,6 +149,15 @@ export default function Header() {
   }, []);
 
   useEffect(() => {
+    function onCartUpdated() {
+      refreshCartCount();
+    }
+
+    window.addEventListener("cart:updated", onCartUpdated);
+    return () => window.removeEventListener("cart:updated", onCartUpdated);
+  }, [refreshCartCount]);
+
+  useEffect(() => {
     refreshCartCount();
     const unsub = pb.authStore.onChange(() => {
       refreshCartCount();
@@ -521,6 +530,249 @@ function CartDrawer({ open, onClose, mode = "cart" }) {
 
   const [purchaseSuccess, setPurchaseSuccess] = useState(null);
 
+  // =====================
+  // Shipping/Profile Modal
+  // =====================
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileModalMode, setProfileModalMode] = useState("confirm"); // "confirm" | "edit"
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileErr, setProfileErr] = useState("");
+
+  const [wsUser, setWsUser] = useState(null);
+
+  const [profileForm, setProfileForm] = useState({
+    phone: "",
+    address: "", // street only
+    city: "",
+    state: "",
+    zip: "",
+  });
+
+  const [saveAsDefault, setSaveAsDefault] = useState(true);
+
+  // Promise bridge so buyNow() can await the modal
+  const profileResolveRef = useRef(null);
+  const profileRejectRef = useRef(null);
+
+  function normalizePhone(val) {
+    return String(val || "").replace(/[^\d]/g, "");
+  }
+
+  function validateProfile(form) {
+    const phoneDigits = normalizePhone(form.phone);
+    if (!phoneDigits || phoneDigits.length < 10)
+      return "Please enter a valid phone number.";
+    if (!String(form.address || "").trim())
+      return "Street address is required.";
+    if (!String(form.city || "").trim()) return "City is required.";
+    if (!String(form.state || "").trim()) return "State is required.";
+    if (!String(form.zip || "").trim()) return "Zip is required.";
+    return "";
+  }
+
+  async function loadWsUser() {
+    await pb.collection("ws_users"); // no-op, but keeps intent clear
+    const authUser = pb.authStore?.model;
+    if (!authUser) return null;
+
+    // Try: ws_users record id === auth user id
+    try {
+      const rec = await pb.collection("ws_users").getOne(authUser.id, {
+        requestKey: null,
+      });
+      return rec;
+    } catch {
+      // Fallback: lookup by email
+      const email = String(authUser.email || "")
+        .trim()
+        .toLowerCase();
+      if (!email) return null;
+      try {
+        const safe = email.replace(/"/g, '\\"');
+        const rec = await pb
+          .collection("ws_users")
+          .getFirstListItem(`email="${safe}"`, { requestKey: null });
+        return rec;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  function openProfileModal({ wsUserRecord, mode }) {
+    setWsUser(wsUserRecord || null);
+
+    const nextForm = {
+      phone: wsUserRecord?.phone || "",
+      address: wsUserRecord?.address || "",
+      city: wsUserRecord?.city || "",
+      state: wsUserRecord?.state || "",
+      zip: wsUserRecord?.zip || "",
+    };
+    setProfileForm(nextForm);
+    setSaveAsDefault(true);
+    setProfileErr("");
+    setProfileModalMode(mode);
+    setProfileModalOpen(true);
+
+    return new Promise((resolve, reject) => {
+      profileResolveRef.current = resolve;
+      profileRejectRef.current = reject;
+    });
+  }
+
+  function closeProfileModalCancel() {
+    setProfileModalOpen(false);
+    setProfileErr("");
+    if (profileRejectRef.current) {
+      profileRejectRef.current(new Error("User cancelled"));
+    }
+    profileResolveRef.current = null;
+    profileRejectRef.current = null;
+  }
+
+  async function confirmOrCollectProfile() {
+    const rec = await loadWsUser();
+
+    // Determine if we have required info
+    const hasPhone = !!String(rec?.phone || "").trim();
+    const hasAddress = !!String(rec?.address || "").trim();
+    const hasCity = !!String(rec?.city || "").trim();
+    const hasState = !!String(rec?.state || "").trim();
+    const hasZip = !!String(rec?.zip || "").trim();
+
+    const hasAll = hasPhone && hasAddress && hasCity && hasState && hasZip;
+
+    // If missing -> force edit/collect
+    if (!hasAll) {
+      return openProfileModal({ wsUserRecord: rec, mode: "edit" });
+    }
+
+    // If present -> confirm first
+    return openProfileModal({ wsUserRecord: rec, mode: "confirm" });
+  }
+
+  async function handleProfileConfirm() {
+    // Confirm mode just resolves with existing values (no changes)
+    setProfileModalOpen(false);
+    setProfileErr("");
+    const payload = { ...profileForm };
+    if (profileResolveRef.current) profileResolveRef.current(payload);
+    profileResolveRef.current = null;
+    profileRejectRef.current = null;
+  }
+
+  async function handleProfileSaveAndContinue() {
+    const msg = validateProfile(profileForm);
+    if (msg) {
+      setProfileErr(msg);
+      return;
+    }
+
+    setProfileLoading(true);
+    setProfileErr("");
+
+    try {
+      // If user wants to save defaults, update ws_users
+      if (saveAsDefault) {
+        const authUser = pb.authStore?.model;
+        if (!authUser) throw new Error("Not logged in.");
+
+        const rec = wsUser || (await loadWsUser());
+
+        if (rec?.id) {
+          await pb.collection("ws_users").update(
+            rec.id,
+            {
+              phone: String(profileForm.phone || "").trim(),
+              address: String(profileForm.address || "").trim(),
+              city: String(profileForm.city || "").trim(),
+              state: String(profileForm.state || "").trim(),
+              zip: String(profileForm.zip || "").trim(),
+            },
+            { requestKey: null },
+          );
+        }
+      }
+
+      setProfileModalOpen(false);
+      const payload = { ...profileForm };
+
+      if (profileResolveRef.current) profileResolveRef.current(payload);
+      profileResolveRef.current = null;
+      profileRejectRef.current = null;
+    } catch (e) {
+      setProfileErr(e?.message || "Failed to save your information.");
+    } finally {
+      setProfileLoading(false);
+    }
+  }
+
+  // =====================
+  // UPDATED buyNow()
+  // =====================
+  async function buyNow() {
+    if (!pb.authStore.isValid || !pb.authStore.model) {
+      navigate("/login/signin");
+      return;
+    }
+    if (!cart || tests.length === 0) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      // ✅ Step 1: confirm or collect address + phone
+      // If user cancels, this throws and stops purchase.
+      await confirmOrCollectProfile();
+
+      // ✅ Step 2: proceed with purchase + order creation (your existing flow)
+      const result = await purchase();
+      if (!result?.ok) throw new Error("Purchase failed.");
+
+      const orderNumber = generateOrderNumber();
+      const orderPayload = {
+        tests: Array.isArray(cart.test)
+          ? cart.test
+          : cart.test
+            ? [cart.test]
+            : [],
+        subtotal: subtotalCents / 100,
+        tax: taxCents / 100,
+        total: totalCents / 100,
+        user: pb.authStore.model.id,
+        order_number: orderNumber,
+        discount: discountRec?.id || null,
+      };
+
+      const created = await pb.collection("orders").create(orderPayload);
+
+      await updateCartTests([]);
+      setCart((prev) =>
+        prev
+          ? { ...prev, test: [], expand: { ...(prev.expand || {}), test: [] } }
+          : prev,
+      );
+
+      setDiscountRec(null);
+      setDiscountCode("");
+      setDiscountStatus("Purchase complete.");
+      setPurchaseSuccess({ orderNumber, orderId: created?.id || null });
+    } catch (e) {
+      // If user cancelled modal, keep it quiet-ish (or show message)
+      const msg = String(e?.message || "");
+      if (msg.includes("cancelled")) {
+        setError("Purchase cancelled.");
+      } else {
+        setError(e?.message || "Purchase failed.");
+      }
+    } finally {
+      setLoading(false);
+    }
+
+    window.dispatchEvent(new CustomEvent("cart:updated"));
+  }
+
   // Load cart or orders when drawer opens / mode changes
   useEffect(() => {
     const ac = new AbortController();
@@ -624,6 +876,8 @@ function CartDrawer({ open, onClose, mode = "cart" }) {
     } finally {
       setLoading(false);
     }
+
+    window.dispatchEvent(new CustomEvent("cart:updated"));
   }
 
   async function clearCart() {
@@ -641,6 +895,7 @@ function CartDrawer({ open, onClose, mode = "cart" }) {
     } finally {
       setLoading(false);
     }
+    window.dispatchEvent(new CustomEvent("cart:updated"));
   }
 
   function goCheckout() {
@@ -691,54 +946,6 @@ function CartDrawer({ open, onClose, mode = "cart" }) {
   async function purchase() {
     // TODO: integrate Stripe/etc.
     return { ok: true };
-  }
-
-  async function buyNow() {
-    if (!pb.authStore.isValid || !pb.authStore.model) {
-      navigate("/login/signin");
-      return;
-    }
-    if (!cart || tests.length === 0) return;
-
-    setLoading(true);
-    setError("");
-    try {
-      const result = await purchase();
-      if (!result?.ok) throw new Error("Purchase failed.");
-      const orderNumber = generateOrderNumber();
-      const orderPayload = {
-        tests: Array.isArray(cart.test)
-          ? cart.test
-          : cart.test
-            ? [cart.test]
-            : [],
-        subtotal: subtotalCents / 100,
-        tax: taxCents / 100, // ✅ NEW: store tax on order.tax
-        total: totalCents / 100,
-        user: pb.authStore.model.id,
-        order_number: orderNumber,
-        discount: discountRec?.id || null,
-      };
-
-      const created = await pb.collection("orders").create(orderPayload);
-
-      await updateCartTests([]);
-      setCart((prev) =>
-        prev
-          ? { ...prev, test: [], expand: { ...(prev.expand || {}), test: [] } }
-          : prev,
-      );
-
-      setDiscountRec(null);
-      setDiscountCode("");
-      setDiscountStatus("Purchase complete.");
-      setPurchaseSuccess({ orderNumber, orderId: created?.id || null });
-      //onClose?.();
-    } catch (e) {
-      setError(e?.message || "Purchase failed.");
-    } finally {
-      setLoading(false);
-    }
   }
 
   const title = mode === "orders" ? "Your orders" : "Your cart";
@@ -1045,6 +1252,215 @@ function CartDrawer({ open, onClose, mode = "cart" }) {
               </button>
             </div>
           </div>
+        )}
+
+        {profileModalOpen && (
+          <>
+            <div
+              className="fixed inset-0 bg-black/40 z-[80]"
+              onClick={closeProfileModalCancel}
+            />
+            <div className="fixed inset-0 z-[81] flex items-center justify-center p-4">
+              <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                  <div className="font-semibold text-slate-900">
+                    {profileModalMode === "confirm"
+                      ? "Confirm your info"
+                      : "Add your info"}
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-lg px-2 py-1 hover:bg-slate-100"
+                    onClick={closeProfileModalCancel}
+                    disabled={profileLoading}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  {profileModalMode === "confirm" ? (
+                    <>
+                      <div className="text-sm text-slate-700">
+                        Please confirm your phone and shipping address are
+                        correct:
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 p-4 text-sm">
+                        <div>
+                          <span className="text-slate-500">Phone:</span>{" "}
+                          <span className="font-medium text-slate-900">
+                            {profileForm.phone || "—"}
+                          </span>
+                        </div>
+                        <div className="mt-2">
+                          <span className="text-slate-500">Address:</span>{" "}
+                          <span className="font-medium text-slate-900">
+                            {profileForm.address || "—"}
+                            {profileForm.city ? `, ${profileForm.city}` : ""}
+                            {profileForm.state ? `, ${profileForm.state}` : ""}
+                            {profileForm.zip ? ` ${profileForm.zip}` : ""}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="rounded-xl bg-sky-600 text-white px-4 py-2 text-sm hover:bg-sky-700"
+                          onClick={handleProfileConfirm}
+                          disabled={profileLoading}
+                        >
+                          Looks good
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
+                          onClick={() => setProfileModalMode("edit")}
+                          disabled={profileLoading}
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-sm text-slate-700">
+                        Enter your phone and shipping address.
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="sm:col-span-2">
+                          <label className="text-xs font-semibold text-slate-600">
+                            Phone
+                          </label>
+                          <input
+                            value={profileForm.phone}
+                            onChange={(e) =>
+                              setProfileForm((p) => ({
+                                ...p,
+                                phone: e.target.value,
+                              }))
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+                            placeholder="(###) ###-####"
+                            disabled={profileLoading}
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="text-xs font-semibold text-slate-600">
+                            Street address
+                          </label>
+                          <input
+                            value={profileForm.address}
+                            onChange={(e) =>
+                              setProfileForm((p) => ({
+                                ...p,
+                                address: e.target.value,
+                              }))
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+                            placeholder="123 Main St"
+                            disabled={profileLoading}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-semibold text-slate-600">
+                            City
+                          </label>
+                          <input
+                            value={profileForm.city}
+                            onChange={(e) =>
+                              setProfileForm((p) => ({
+                                ...p,
+                                city: e.target.value,
+                              }))
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+                            disabled={profileLoading}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-semibold text-slate-600">
+                            State
+                          </label>
+                          <input
+                            value={profileForm.state}
+                            onChange={(e) =>
+                              setProfileForm((p) => ({
+                                ...p,
+                                state: e.target.value,
+                              }))
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+                            placeholder="CA"
+                            disabled={profileLoading}
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="text-xs font-semibold text-slate-600">
+                            Zip
+                          </label>
+                          <input
+                            value={profileForm.zip}
+                            onChange={(e) =>
+                              setProfileForm((p) => ({
+                                ...p,
+                                zip: e.target.value,
+                              }))
+                            }
+                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+                            placeholder="91765"
+                            disabled={profileLoading}
+                          />
+                        </div>
+                      </div>
+
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={saveAsDefault}
+                          onChange={(e) => setSaveAsDefault(e.target.checked)}
+                          disabled={profileLoading}
+                        />
+                        Save this as my default information
+                      </label>
+
+                      {profileErr && (
+                        <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 p-3 text-sm">
+                          {profileErr}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="rounded-xl bg-sky-600 text-white px-4 py-2 text-sm hover:bg-sky-700 disabled:opacity-60"
+                          onClick={handleProfileSaveAndContinue}
+                          disabled={profileLoading}
+                        >
+                          {profileLoading ? "Saving…" : "Continue"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="rounded-xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
+                          onClick={closeProfileModalCancel}
+                          disabled={profileLoading}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </aside>
     </>
