@@ -79,6 +79,74 @@ export default function AuthPage() {
     routeMode === "signup" ? "signup" : "signin",
   );
 
+  function normStr(v) {
+    return String(v ?? "").trim();
+  }
+
+  function extractCityStateZip(addressObj) {
+    // Supports common Google Places shapes:
+    // - addressObj.components / addressObj.address_components
+    // - direct fields: city/state/zip/postal_code
+    // - formatted: addressObj.formatted / formatted_address / address
+
+    if (!addressObj) return { city: "", state: "", zip: "" };
+
+    // direct fields first (if your PlacesAddressInput already normalizes)
+    const directCity = normStr(addressObj.city);
+    const directState = normStr(addressObj.state);
+    const directZip =
+      normStr(addressObj.zip) || normStr(addressObj.postal_code);
+
+    if (directCity || directState || directZip) {
+      return { city: directCity, state: directState, zip: directZip };
+    }
+
+    const comps =
+      addressObj.components ||
+      addressObj.address_components ||
+      addressObj?.place?.address_components ||
+      [];
+
+    const findComp = (type) =>
+      comps.find((c) => Array.isArray(c?.types) && c.types.includes(type));
+
+    const city =
+      normStr(findComp("locality")?.long_name) ||
+      normStr(findComp("postal_town")?.long_name) ||
+      normStr(findComp("sublocality")?.long_name) ||
+      normStr(findComp("administrative_area_level_3")?.long_name);
+
+    const state =
+      normStr(findComp("administrative_area_level_1")?.short_name) ||
+      normStr(findComp("administrative_area_level_1")?.long_name);
+
+    const zip =
+      normStr(findComp("postal_code")?.long_name) ||
+      normStr(findComp("postal_code")?.short_name);
+
+    return { city, state, zip };
+  }
+
+  function parseCityStateZipFromString(addressStr) {
+    // Fallback heuristic for US addresses like:
+    // "123 Main St, San Diego, CA 92101"
+    const s = normStr(addressStr);
+    if (!s) return { city: "", state: "", zip: "" };
+
+    const parts = s
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    // expect last part like "CA 92101" and prior part city
+    const last = parts[parts.length - 1] || "";
+    const prev = parts[parts.length - 2] || "";
+
+    const m = last.match(/\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/);
+    if (!m) return { city: "", state: "", zip: "" };
+
+    return { city: prev, state: m[1], zip: m[2] };
+  }
+
   useEffect(() => {
     if (routeMode === "signup") setMode("signup");
     else setMode("signin");
@@ -120,6 +188,11 @@ export default function AuthPage() {
     setLoading(true);
 
     try {
+      const { city, state, zip } =
+        addressObj && typeof addressObj === "object"
+          ? extractCityStateZip(addressObj)
+          : parseCityStateZipFromString(addressObj);
+
       const res = await apiFetch("/api/auth/signup", {
         method: "POST",
         body: {
@@ -128,7 +201,14 @@ export default function AuthPage() {
           fname: fname.trim(),
           lname: lname.trim(),
           phone: phone.trim(),
+
+          // keep storing the full object for your existing flow
           address: addressObj || null,
+
+          // ✅ new fields for ws_users
+          city,
+          state,
+          zip,
         },
       });
 
