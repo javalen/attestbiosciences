@@ -1,13 +1,3 @@
-// AdminPanel.jsx (DROP-IN)
-// ✅ Refactor: smaller components for maintainability
-// ✅ Adds Mailing List section:
-//    - time range selector [1 day, 1 week, 1 month, 6 months, 1 year, year to date]
-//    - default = 1 month
-//    - server-side filter: only records with created >= computed start date
-//    - export CSV button
-//    - table w/ checkbox in col 1; checking deletes record (with confirm)
-// ✅ Keeps your existing Teams + Team Members inline edit + image upload behavior
-
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -32,6 +22,131 @@ import {
 } from "@/data/adminApi";
 
 /* ---------- Utilities ---------- */
+function getOrderUser(order) {
+  return order?.expand?.user || null;
+}
+
+function renderUserFullName(u) {
+  if (!u) return "—";
+  const name = [u?.fname, u?.lname].filter(Boolean).join(" ").trim();
+  return name || u?.email || u?.id || "—";
+}
+
+function renderCityState(u) {
+  if (!u) return "—";
+  const city = String(u?.city || "").trim();
+  const state = String(u?.state || "").trim();
+  if (!city && !state) return "—";
+  if (city && state) return `${city}, ${state}`;
+  return city || state;
+}
+
+function clamp(n, min, max) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return min;
+  return Math.min(max, Math.max(min, x));
+}
+
+function computeOrderDiscountAmount(order) {
+  // Prefer computing from expanded discount if available,
+  // otherwise fallback to (subtotal + tax) - total.
+  const subtotal = Number.parseFloat(order?.subtotal ?? "0") || 0;
+  const tax = Number.parseFloat(order?.tax ?? "0") || 0;
+  const total = Number.parseFloat(order?.total ?? "0") || 0;
+
+  const d = order?.expand?.discount;
+
+  if (d && typeof d === "object") {
+    const type = String(d?.type || "").toLowerCase();
+    const val = Number.parseFloat(d?.discount ?? d?.amount ?? "0") || 0;
+
+    if (type === "percent") {
+      return clamp((subtotal * val) / 100, 0, subtotal);
+    }
+    if (type === "fixed") {
+      return clamp(val, 0, subtotal);
+    }
+    // free_shipping or unknown
+    return 0;
+  }
+
+  // Fallback heuristic if discount isn't expanded / stored:
+  // discount = (subtotal + tax) - total, never < 0
+  const guess = subtotal + tax - total;
+  return clamp(guess, 0, subtotal);
+}
+
+function resolveOrderTests(order, relationsCache) {
+  // Prefer expanded tests
+  const expanded = order?.expand?.tests;
+  if (Array.isArray(expanded) && expanded.length) {
+    return expanded.map((t) => ({
+      id: t?.id || "",
+      name: t?.name || t?.title || t?.id || "—",
+      cost: t?.cost,
+    }));
+  }
+
+  // Fall back to ids -> label lookup from relations cache (options)
+  const ids = Array.isArray(order?.tests) ? order.tests : [];
+  const opts = relationsCache?.tests || [];
+  return ids.map((id) => {
+    const opt = opts.find((o) => o.id === id);
+    return { id, name: opt?.label || id, cost: null };
+  });
+}
+
+function getFirstField(obj, keys, fallback = undefined) {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v !== undefined && v !== null && v !== "") return v;
+  }
+  return fallback;
+}
+
+function moneyFromRecord(r, keys) {
+  const raw = getFirstField(r, keys, null);
+  if (raw == null) return "—";
+
+  // handle cents-style fields (e.g. 1299 = $12.99)
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n)) return "—";
+
+  // heuristic: if key name suggests cents OR value is large and no decimals
+  const key = keys.find((k) => r?.[k] != null) || "";
+  const isCentsKey = /cents|_ct|_cent/i.test(key);
+  const val = isCentsKey ? n / 100 : n;
+
+  return formatUSD(val);
+}
+
+function renderUserFromOrder(r) {
+  // common relation field names in PB
+  const relKey = ["user", "ws_user", "user_id", "customer", "customer_id"].find(
+    (k) => r?.[k] || r?.expand?.[k],
+  );
+
+  const u = relKey ? r?.expand?.[relKey] : null;
+
+  if (u && typeof u === "object") {
+    const name = [u.fname, u.lname].filter(Boolean).join(" ").trim();
+    return name || u.email || u.username || u.id || "—";
+  }
+
+  // fallback if no expand
+  return r?.user_email || r?.email || (relKey ? r?.[relKey] : "—") || "—";
+}
+
+function renderDiscountCodeFromOrder(r) {
+  const relKey = ["discount", "discount_id", "coupon", "coupon_id"].find(
+    (k) => r?.[k] || r?.expand?.[k],
+  );
+  const d = relKey ? r?.expand?.[relKey] : null;
+  if (d && typeof d === "object") return d.code || d.name || d.id || "—";
+
+  return r?.discount_code || r?.coupon_code || r?.code || "—";
+}
+
 function fileToObjectUrl(file) {
   if (!file) return "";
   try {
@@ -209,7 +324,9 @@ const MENU = [
   { key: "test_category", label: "Test Categories" },
   { key: "cart", label: "Carts" },
   // { key: "testimonial", label: "Testimonials" },
-  { key: "mailing_list", label: "Mailing List" }, // ✅ NEW
+  { key: "mailing_list", label: "Mailing List" },
+  { key: "orders", label: "Orders" },
+  { key: "discount", label: "Discounts" },
 ];
 
 /**
@@ -507,6 +624,211 @@ const FIELD_CONFIG = {
       { key: "reviewed", label: "Reviewed", type: "checkbox" },
     ],
   },
+
+  orders: {
+    listColumns: [
+      {
+        key: "order_number",
+        header: "Order #",
+        render: (r) => r?.order_number || r?.id || "—",
+      },
+      {
+        key: "user",
+        header: "User",
+        render: (r) => {
+          const u = r?.expand?.user;
+          if (u) {
+            const name = [u.fname, u.lname].filter(Boolean).join(" ").trim();
+            return name || u.email || u.id;
+          }
+          return r?.user || "—";
+        },
+      },
+      {
+        key: "tests",
+        header: "Tests",
+        render: (r) => {
+          const t = r?.expand?.tests;
+          if (Array.isArray(t) && t.length)
+            return t.map((x) => x?.name || x?.id).join(", ");
+          if (Array.isArray(r?.tests) && r.tests.length)
+            return `${r.tests.length}`;
+          return "—";
+        },
+      },
+      {
+        key: "subtotal",
+        header: "Subtotal",
+        render: (r) => formatUSD(r?.subtotal),
+      },
+      {
+        key: "discount",
+        header: "Discount",
+        render: (r) => {
+          const d = r?.expand?.discount;
+          // show discount code if present, otherwise just show the relation id
+          return d?.code || d?.name || r?.discount || "—";
+        },
+      },
+      {
+        key: "tax",
+        header: "Tax",
+        render: (r) => formatUSD(r?.tax),
+      },
+      {
+        key: "total",
+        header: "Total",
+        render: (r) => formatUSD(r?.total),
+      },
+      {
+        key: "created",
+        header: "Created",
+        render: (r) =>
+          r?.created ? new Date(r.created).toLocaleString() : "—",
+      },
+    ],
+
+    formFields: [
+      {
+        key: "user",
+        label: "User",
+        type: "relation",
+        collection: "ws_users",
+        display: "email",
+      },
+      { key: "order_number", label: "Order Number", type: "text" },
+      // {
+      //   key: "tests",
+      //   label: "Tests111",
+      //   type: "multirelation",
+      //   collection: "test",
+      //   display: "name",
+      // },
+      {
+        key: "discount",
+        label: "Discount",
+        type: "relation",
+        collection: "discount",
+        display: "code",
+      },
+      { key: "subtotal", label: "Subtotal", type: "number" },
+      { key: "tax", label: "Tax", type: "number" },
+      { key: "total", label: "Total", type: "number" },
+    ],
+
+    sort: "-created",
+  },
+
+  discount: {
+    listColumns: [
+      { key: "code", header: "Code" },
+
+      {
+        key: "type",
+        header: "Type",
+        render: (r) => r?.type ?? "—",
+      },
+
+      {
+        key: "discount",
+        header: "Discount",
+        render: (r) => {
+          const t = String(r?.type || "").toLowerCase();
+          const n = Number.parseFloat(r?.discount ?? "");
+          if (!Number.isFinite(n)) return "—";
+
+          if (t === "percent") return `${n}%`;
+          if (t === "free_shipping") return "Free Shipping";
+          // fixed
+          return formatUSD(n);
+        },
+      },
+
+      {
+        key: "active",
+        header: "Active",
+        render: (r) => {
+          const now = new Date();
+
+          // start_date/end_date can be empty (treat as open-ended)
+          const startOk = r?.start_date ? now >= new Date(r.start_date) : true;
+
+          const endOk = r?.end_date ? now <= new Date(r.end_date) : true;
+
+          // uses/max_uses can be empty (treat max_uses empty as unlimited)
+          const uses = Number.parseInt(r?.uses ?? "0", 10);
+          const maxUsesRaw = r?.max_uses;
+
+          const hasLimit =
+            maxUsesRaw !== "" &&
+            maxUsesRaw != null &&
+            !Number.isNaN(Number(maxUsesRaw));
+
+          const maxUses = hasLimit ? Number.parseInt(maxUsesRaw, 10) : null;
+
+          const usesOk = maxUses == null ? true : uses <= maxUses;
+
+          const isActive = startOk && endOk && usesOk;
+
+          return isActive ? "Yes" : "No";
+        },
+      },
+
+      {
+        key: "start_date",
+        header: "Starts",
+        render: (r) =>
+          r?.start_date ? new Date(r.start_date).toLocaleString() : "—",
+      },
+
+      {
+        key: "end_date",
+        header: "Ends",
+        render: (r) =>
+          r?.end_date ? new Date(r.end_date).toLocaleString() : "—",
+      },
+
+      {
+        key: "max_uses",
+        header: "Max Uses",
+        render: (r) =>
+          r?.max_uses === "" || r?.max_uses == null ? "—" : r.max_uses,
+      },
+
+      {
+        key: "uses",
+        header: "Uses",
+        render: (r) => (r?.uses === "" || r?.uses == null ? 0 : r.uses),
+      },
+
+      { key: "updated", header: "Updated" },
+    ],
+
+    formFields: [
+      { key: "code", label: "Code", type: "text" },
+
+      {
+        key: "type",
+        label: "Type",
+        type: "select",
+        options: ["percent", "fixed", "free_shipping"],
+      },
+
+      {
+        key: "discount",
+        label: "Discount (percent or dollars)",
+        type: "number",
+      },
+
+      { key: "start_date", label: "Start Date", type: "datetime" },
+      { key: "end_date", label: "End Date", type: "datetime" },
+
+      { key: "max_uses", label: "Max Uses", type: "number" },
+      { key: "uses", label: "Uses", type: "number" },
+    ],
+
+    sort: "-updated",
+  },
 };
 
 /* ---------- UI Primitives ---------- */
@@ -579,7 +901,7 @@ async function fetchOptions(collection, display) {
 }
 
 /* ---------- JsonEditor ---------- */
-function JsonEditor({ value, onChange, placeholder }) {
+function JsonEditor({ value, onChange, placeholder, disabled = false }) {
   const [txt, setTxt] = useState(() => {
     if (value == null || value === "") return "";
     try {
@@ -629,6 +951,7 @@ function JsonEditor({ value, onChange, placeholder }) {
         rows={6}
         value={txt}
         placeholder={placeholder}
+        disabled={readOnly}
         onChange={(e) => commit(e.target.value)}
       />
       {err && <div className="mt-1 text-xs text-red-600">{err}</div>}
@@ -1100,6 +1423,7 @@ function AddTeamMemberModal({ open, onClose, onCreated }) {
 ============================================================================ */
 function EditModal({ open, onClose, collection, row, onSaved }) {
   const cfg = FIELD_CONFIG[collection];
+  const readOnly = collection === "orders";
   const [inputs, setInputs] = useState({});
   const [loading, setLoading] = useState(false);
   const [relationsCache, setRelationsCache] = useState({});
@@ -1255,6 +1579,7 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
   };
 
   const save = async () => {
+    if (readOnly) return;
     setLoading(true);
     try {
       const payload = buildPayload();
@@ -1311,368 +1636,592 @@ function EditModal({ open, onClose, collection, row, onSaved }) {
                 {row?.id ? "Edit" : "Add"} {collection}
               </h2>
             </div>
-            <UIButton onClick={save} disabled={loading || deleting}>
+            <UIButton onClick={save} disabled={loading || deleting || readOnly}>
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Pencil className="h-4 w-4" />
               )}
-              Save
+              {readOnly ? "Read Only" : "Save"}
             </UIButton>
           </div>
         </div>
 
         {/* Body (scrolls) */}
         <div className="flex-1 overflow-y-auto p-5 pt-4">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {cfg.formFields.map((f) => {
-              // ✅ File input (if you ever add file fields to EditModal configs)
-              if (f.type === "file") {
-                return (
-                  <div
-                    key={f.key}
-                    className="md:col-span-2 flex items-center gap-3"
-                  >
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        handleChange(f.key, file);
-                      }}
-                    />
-                    {inputs?.[f.key] instanceof File && (
-                      <span className="text-xs text-slate-500">
-                        {inputs[f.key].name}
-                      </span>
-                    )}
-                  </div>
-                );
-              }
+          {/* ✅ Orders: Summary + Tests list */}
+          {collection === "orders" &&
+            (() => {
+              const merged = { ...(row || {}), ...(inputs || {}) };
+              const u =
+                getOrderUser(merged) ||
+                getOrderUser(row) ||
+                getOrderUser(inputs);
 
-              let v = inputs?.[f.key];
-              if (f.type === "datetime") v = toDatetimeLocal(v);
+              const orderNumber =
+                merged?.order_number || row?.order_number || row?.id || "—";
+              const orderDate = row?.created
+                ? new Date(row.created).toLocaleString()
+                : "—";
 
-              // Included tests selector
-              if (collection === "test" && f.key === "included_test") {
-                const showBlock = !!inputs?.top_level_test;
-                return (
-                  <div key={f.key} className="md:col-span-2">
-                    <div className="mb-2 text-sm font-medium text-slate-700">
-                      {f.label}
+              const userName = renderUserFullName(u);
+              const userAddress = u?.address ? String(u.address) : "—";
+              const userEmail = u?.email ? String(u.email) : "—";
+              const userPhone = u?.phone ? String(u.phone) : "—";
+              const userCityState = renderCityState(u);
+              const userZip = u?.zip ? String(u.zip) : "—";
+
+              const subtotal = formatUSD(merged?.subtotal ?? row?.subtotal);
+              const tax = formatUSD(merged?.tax ?? row?.tax);
+              const total = formatUSD(merged?.total ?? row?.total);
+
+              const discountAmt = formatUSD(computeOrderDiscountAmount(merged));
+              const discountCode = renderDiscountCodeFromOrder(merged);
+
+              return (
+                <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  {/* Top: Order number / Date */}
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Order number
+                      </div>
+                      <div className="mt-1 text-sm font-semibold text-slate-900">
+                        {orderNumber}
+                      </div>
                     </div>
 
-                    {!showBlock ? (
-                      <div className="text-xs text-slate-500">
-                        Check <b>“Includes Test (Top Level)”</b> to select
-                        included tests.
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        Date
                       </div>
-                    ) : (
-                      <div className="overflow-hidden rounded-xl border border-slate-200">
-                        {/* Keep this inner scroll too, but it now lives inside a scrolling modal body */}
-                        <div className="max-h-64 overflow-y-auto">
-                          <table className="min-w-full divide-y divide-slate-200">
-                            <thead className="bg-slate-50">
-                              <tr>
-                                <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
-                                  Test Name
-                                </th>
-                                <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
-                                  Included
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 bg-white">
-                              {(relationsCache[f.key] || []).map((opt) => {
-                                const checked = Array.isArray(inputs?.[f.key])
-                                  ? inputs[f.key].includes(opt.id)
-                                  : false;
-                                const disabled = row?.id && opt.id === row.id;
+                      <div className="mt-1 text-sm font-semibold text-slate-900">
+                        {orderDate}
+                      </div>
+                    </div>
 
-                                return (
-                                  <tr key={opt.id}>
-                                    <td className="px-3 py-2 text-sm text-slate-700">
-                                      {opt.label}
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      <input
-                                        type="checkbox"
-                                        disabled={disabled}
-                                        checked={checked}
-                                        onChange={() => toggleIncluded(opt.id)}
-                                      />
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                    {/* User row 1 */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        User first and last name
+                      </div>
+                      <div className="mt-1 text-sm text-slate-900">
+                        {userName}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        User address
+                      </div>
+                      <div className="mt-1 text-sm text-slate-900 whitespace-pre-wrap">
+                        {userAddress}
+                      </div>
+                    </div>
+
+                    {/* User row 2 */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        User email
+                      </div>
+                      <div className="mt-1 text-sm text-slate-900 break-all">
+                        {userEmail}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        User City, state
+                      </div>
+                      <div className="mt-1 text-sm text-slate-900">
+                        {userCityState}
+                      </div>
+                    </div>
+
+                    {/* User row 3 */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        User phone
+                      </div>
+                      <div className="mt-1 text-sm text-slate-900">
+                        {userPhone}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        User zipcode
+                      </div>
+                      <div className="mt-1 text-sm text-slate-900">
+                        {userZip}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Totals */}
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                            Subtotal
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-slate-900">
+                            {subtotal}
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                            Discount
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-slate-900">
+                            {discountAmt}
+                          </div>
+                          {discountCode !== "—" && (
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              Code: {discountCode}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    )}
-                  </div>
-                );
-              }
-
-              // Teams Members block (unchanged)
-              if (
-                collection === "teams" &&
-                f.type === "multirelation" &&
-                f.collection === "team_members"
-              ) {
-                const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
-                const opts = relationsCache[key] || [];
-                const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
-
-                const memberById = (id) => {
-                  const expandedArr = Array.isArray(inputs?.expand?.[key])
-                    ? inputs.expand[key]
-                    : Array.isArray(row?.expand?.[key])
-                      ? row.expand[key]
-                      : null;
-                  const fromExpand = expandedArr?.find((m) => m?.id === id);
-                  if (fromExpand) return fromExpand;
-                  const opt = (opts || []).find((o) => o.id === id);
-                  return opt ? { id: opt.id, name: opt.label } : { id };
-                };
-
-                return (
-                  <div key={f.key} className="md:col-span-2">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="text-sm font-medium text-slate-700">
-                        {f.label}
-                      </div>
-                      <UIButton
-                        type="button"
-                        variant="ghost"
-                        onClick={() => setAddUserOpen(true)}
-                        className="border border-slate-200"
-                      >
-                        <Plus className="h-4 w-4" />
-                        Add User
-                      </UIButton>
                     </div>
 
-                    <div className="rounded-lg border border-slate-200 p-2">
-                      <div className="flex flex-wrap gap-2">
-                        {opts.map((o) => {
-                          const checked = curr.includes(o.id);
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                            Tax
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-slate-900">
+                            {tax}
+                          </div>
+                        </div>
 
-                          return (
-                            <div
-                              key={o.id}
-                              className={`flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${
-                                checked
-                                  ? "border-slate-900 bg-slate-50"
-                                  : "border-slate-200"
-                              }`}
-                            >
-                              <label className="flex items-center gap-2">
+                        <div className="text-right">
+                          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                            Total
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-slate-900">
+                            {total}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tests table */}
+                  <div className="mt-4">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
+                      Test table
+                    </div>
+
+                    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">
+                              Test
+                            </th>
+                            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">
+                              Cost
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {resolveOrderTests(merged, relationsCache).map(
+                            (t) => (
+                              <tr key={t.id}>
+                                <td className="px-3 py-2 text-slate-800">
+                                  {t.name}
+                                </td>
+                                <td className="px-3 py-2 text-right text-slate-800">
+                                  {t.cost != null ? formatUSD(t.cost) : "—"}
+                                </td>
+                              </tr>
+                            ),
+                          )}
+
+                          {resolveOrderTests(merged, relationsCache).length ===
+                            0 && (
+                            <tr>
+                              <td
+                                colSpan={2}
+                                className="px-3 py-3 text-center text-slate-500"
+                              >
+                                No tests on this order.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          {collection !== "orders" && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {cfg.formFields.map((f) => {
+                // ✅ File input (if you ever add file fields to EditModal configs)
+                if (f.type === "file") {
+                  return (
+                    <div
+                      key={f.key}
+                      className="md:col-span-2 flex items-center gap-3"
+                    >
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={readOnly}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          handleChange(f.key, file);
+                        }}
+                      />
+                      {inputs?.[f.key] instanceof File && (
+                        <span className="text-xs text-slate-500">
+                          {inputs[f.key].name}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+
+                let v = inputs?.[f.key];
+                if (f.type === "datetime") v = toDatetimeLocal(v);
+
+                // Included tests selector
+                if (collection === "test" && f.key === "included_test") {
+                  const showBlock = !!inputs?.top_level_test;
+                  return (
+                    <div key={f.key} className="md:col-span-2">
+                      <div className="mb-2 text-sm font-medium text-slate-700">
+                        {f.label}
+                      </div>
+
+                      {!showBlock ? (
+                        <div className="text-xs text-slate-500">
+                          Check <b>“Includes Test (Top Level)”</b> to select
+                          included tests.
+                        </div>
+                      ) : (
+                        <div className="overflow-hidden rounded-xl border border-slate-200">
+                          {/* Keep this inner scroll too, but it now lives inside a scrolling modal body */}
+                          <div className="max-h-64 overflow-y-auto">
+                            <table className="min-w-full divide-y divide-slate-200">
+                              <thead className="bg-slate-50">
+                                <tr>
+                                  <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
+                                    Test Name
+                                  </th>
+                                  <th className="sticky top-0 z-10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-50">
+                                    Included
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {(relationsCache[f.key] || []).map((opt) => {
+                                  const checked = Array.isArray(inputs?.[f.key])
+                                    ? inputs[f.key].includes(opt.id)
+                                    : false;
+                                  const disabled = row?.id && opt.id === row.id;
+
+                                  return (
+                                    <tr key={opt.id}>
+                                      <td className="px-3 py-2 text-sm text-slate-700">
+                                        {opt.label}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <input
+                                          type="checkbox"
+                                          disabled={disabled}
+                                          checked={checked}
+                                          onChange={() =>
+                                            toggleIncluded(opt.id)
+                                          }
+                                        />
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                // Teams Members block (unchanged)
+                if (
+                  collection === "teams" &&
+                  f.type === "multirelation" &&
+                  f.collection === "team_members"
+                ) {
+                  const key = membersKey || MEMBERS_FIELD_CANDIDATES[0];
+                  const opts = relationsCache[key] || [];
+                  const curr = Array.isArray(inputs?.[key]) ? inputs[key] : [];
+
+                  const memberById = (id) => {
+                    const expandedArr = Array.isArray(inputs?.expand?.[key])
+                      ? inputs.expand[key]
+                      : Array.isArray(row?.expand?.[key])
+                        ? row.expand[key]
+                        : null;
+                    const fromExpand = expandedArr?.find((m) => m?.id === id);
+                    if (fromExpand) return fromExpand;
+                    const opt = (opts || []).find((o) => o.id === id);
+                    return opt ? { id: opt.id, name: opt.label } : { id };
+                  };
+
+                  return (
+                    <div key={f.key} className="md:col-span-2">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="text-sm font-medium text-slate-700">
+                          {f.label}
+                        </div>
+                        <UIButton
+                          type="button"
+                          variant="ghost"
+                          onClick={() => setAddUserOpen(true)}
+                          className="border border-slate-200"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Add User
+                        </UIButton>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 p-2">
+                        <div className="flex flex-wrap gap-2">
+                          {opts.map((o) => {
+                            const checked = curr.includes(o.id);
+
+                            return (
+                              <div
+                                key={o.id}
+                                className={`flex items-center gap-2 rounded-md border px-2 py-1 text-xs ${
+                                  checked
+                                    ? "border-slate-900 bg-slate-50"
+                                    : "border-slate-200"
+                                }`}
+                              >
+                                <label className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      const next = checked
+                                        ? curr.filter((x) => x !== o.id)
+                                        : [...curr, o.id];
+                                      handleChange(key, next);
+                                    }}
+                                  />
+                                  <span>{o.label}</span>
+                                </label>
+
+                                {checked && (
+                                  <button
+                                    type="button"
+                                    title="Edit member"
+                                    className="ml-1 inline-flex items-center justify-center rounded-md p-1 text-slate-600 hover:bg-slate-200"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setMemberToEdit(memberById(o.id));
+                                      setMemberEditOpen(true);
+                                    }}
+                                  >
+                                    <Edit3 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {opts.length === 0 && (
+                            <div className="text-xs text-slate-500">
+                              No users found yet. Click <b>Add User</b> to
+                              create one.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-1 text-xs text-slate-500">
+                        Using team field: <b>{key}</b>
+                      </div>
+
+                      <AddTeamMemberModal
+                        open={addUserOpen}
+                        onClose={() => setAddUserOpen(false)}
+                        onCreated={async (created) => {
+                          await refreshTeamMemberOptions();
+                          await attachMemberToTeamNow(created.id);
+                        }}
+                      />
+
+                      <EditTeamMemberModal
+                        open={memberEditOpen}
+                        member={memberToEdit}
+                        onClose={() => {
+                          setMemberEditOpen(false);
+                          setMemberToEdit(null);
+                        }}
+                        onSaved={async () => {
+                          await refreshTeamMemberOptions();
+                          if (row?.id) {
+                            const fresh = await adminList("teams", {
+                              page: 1,
+                              perPage: 1,
+                              sort: "",
+                              filter: `id = "${row.id}"`,
+                              expand: MEMBERS_FIELD_CANDIDATES.join(","),
+                            });
+                            const nextTeam = fresh?.items?.[0];
+                            if (nextTeam) setInputs(nextTeam);
+                          }
+                          onSaved?.();
+                        }}
+                        onDeleted={async (deletedId) => {
+                          await removeMemberFromTeamNow(deletedId);
+                          await refreshTeamMemberOptions();
+                        }}
+                      />
+                    </div>
+                  );
+                }
+
+                return (
+                  <label key={f.key} className="flex flex-col gap-1 text-sm">
+                    <span className="font-medium text-slate-700">
+                      {f.label}
+                    </span>
+
+                    {f.type === "text" && (
+                      <UIInput
+                        value={v ?? ""}
+                        disabled={readOnly}
+                        onChange={(e) => handleChange(f.key, e.target.value)}
+                      />
+                    )}
+
+                    {f.type === "number" && (
+                      <UIInput
+                        type="number"
+                        value={v ?? ""}
+                        disabled={readOnly}
+                        onChange={(e) =>
+                          handleChange(
+                            f.key,
+                            e.target.value === "" ? "" : e.target.valueAsNumber,
+                          )
+                        }
+                      />
+                    )}
+
+                    {f.type === "textarea" && (
+                      <UITextarea
+                        rows={4}
+                        value={v ?? ""}
+                        onChange={(e) => handleChange(f.key, e.target.value)}
+                      />
+                    )}
+
+                    {f.type === "checkbox" && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!inputs?.[f.key]}
+                          onChange={(e) =>
+                            handleChange(f.key, e.target.checked)
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {f.type === "select" && (
+                      <select
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        value={v ?? ""}
+                        disabled={readOnly}
+                        onChange={(e) => handleChange(f.key, e.target.value)}
+                      >
+                        <option value="">—</option>
+                        {f.options.map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
+                    {f.type === "multiselect" && (
+                      <div className="rounded-lg border border-slate-200 p-2">
+                        <div className="flex flex-wrap gap-2">
+                          {f.options.map((opt) => {
+                            const checked = Array.isArray(inputs?.[f.key])
+                              ? inputs[f.key].includes(opt)
+                              : false;
+                            return (
+                              <label
+                                key={opt}
+                                className="flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1 text-xs"
+                              >
                                 <input
                                   type="checkbox"
                                   checked={checked}
-                                  onChange={() => {
-                                    const next = checked
-                                      ? curr.filter((x) => x !== o.id)
-                                      : [...curr, o.id];
-                                    handleChange(key, next);
-                                  }}
+                                  onChange={() => toggleMulti(f.key, opt)}
                                 />
-                                <span>{o.label}</span>
+                                <span>{opt}</span>
                               </label>
-
-                              {checked && (
-                                <button
-                                  type="button"
-                                  title="Edit member"
-                                  className="ml-1 inline-flex items-center justify-center rounded-md p-1 text-slate-600 hover:bg-slate-200"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setMemberToEdit(memberById(o.id));
-                                    setMemberEditOpen(true);
-                                  }}
-                                >
-                                  <Edit3 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-
-                        {opts.length === 0 && (
-                          <div className="text-xs text-slate-500">
-                            No users found yet. Click <b>Add User</b> to create
-                            one.
-                          </div>
-                        )}
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
+                    )}
 
-                    <div className="mt-1 text-xs text-slate-500">
-                      Using team field: <b>{key}</b>
-                    </div>
+                    {f.type === "relation" && (
+                      <select
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        value={inputs?.[f.key] ?? ""}
+                        onChange={(e) => handleChange(f.key, e.target.value)}
+                      >
+                        <option value="">—</option>
+                        {(relationsCache[f.key] || []).map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
 
-                    <AddTeamMemberModal
-                      open={addUserOpen}
-                      onClose={() => setAddUserOpen(false)}
-                      onCreated={async (created) => {
-                        await refreshTeamMemberOptions();
-                        await attachMemberToTeamNow(created.id);
-                      }}
-                    />
-
-                    <EditTeamMemberModal
-                      open={memberEditOpen}
-                      member={memberToEdit}
-                      onClose={() => {
-                        setMemberEditOpen(false);
-                        setMemberToEdit(null);
-                      }}
-                      onSaved={async () => {
-                        await refreshTeamMemberOptions();
-                        if (row?.id) {
-                          const fresh = await adminList("teams", {
-                            page: 1,
-                            perPage: 1,
-                            sort: "",
-                            filter: `id = "${row.id}"`,
-                            expand: MEMBERS_FIELD_CANDIDATES.join(","),
-                          });
-                          const nextTeam = fresh?.items?.[0];
-                          if (nextTeam) setInputs(nextTeam);
-                        }
-                        onSaved?.();
-                      }}
-                      onDeleted={async (deletedId) => {
-                        await removeMemberFromTeamNow(deletedId);
-                        await refreshTeamMemberOptions();
-                      }}
-                    />
-                  </div>
-                );
-              }
-
-              return (
-                <label key={f.key} className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-slate-700">{f.label}</span>
-
-                  {f.type === "text" && (
-                    <UIInput
-                      value={v ?? ""}
-                      onChange={(e) => handleChange(f.key, e.target.value)}
-                    />
-                  )}
-
-                  {f.type === "number" && (
-                    <UIInput
-                      type="number"
-                      value={v ?? ""}
-                      onChange={(e) =>
-                        handleChange(
-                          f.key,
-                          e.target.value === "" ? "" : e.target.valueAsNumber,
-                        )
-                      }
-                    />
-                  )}
-
-                  {f.type === "textarea" && (
-                    <UITextarea
-                      rows={4}
-                      value={v ?? ""}
-                      onChange={(e) => handleChange(f.key, e.target.value)}
-                    />
-                  )}
-
-                  {f.type === "checkbox" && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={!!inputs?.[f.key]}
-                        onChange={(e) => handleChange(f.key, e.target.checked)}
+                    {f.type === "datetime" && (
+                      <UIInput
+                        type="datetime-local"
+                        value={v ?? ""}
+                        disabled={readOnly}
+                        onChange={(e) => handleChange(f.key, e.target.value)}
                       />
-                    </div>
-                  )}
+                    )}
 
-                  {f.type === "select" && (
-                    <select
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      value={v ?? ""}
-                      onChange={(e) => handleChange(f.key, e.target.value)}
-                    >
-                      <option value="">—</option>
-                      {f.options.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-
-                  {f.type === "multiselect" && (
-                    <div className="rounded-lg border border-slate-200 p-2">
-                      <div className="flex flex-wrap gap-2">
-                        {f.options.map((opt) => {
-                          const checked = Array.isArray(inputs?.[f.key])
-                            ? inputs[f.key].includes(opt)
-                            : false;
-                          return (
-                            <label
-                              key={opt}
-                              className="flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1 text-xs"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => toggleMulti(f.key, opt)}
-                              />
-                              <span>{opt}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {f.type === "relation" && (
-                    <select
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      value={inputs?.[f.key] ?? ""}
-                      onChange={(e) => handleChange(f.key, e.target.value)}
-                    >
-                      <option value="">—</option>
-                      {(relationsCache[f.key] || []).map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-
-                  {f.type === "datetime" && (
-                    <UIInput
-                      type="datetime-local"
-                      value={v ?? ""}
-                      onChange={(e) => handleChange(f.key, e.target.value)}
-                    />
-                  )}
-
-                  {f.type === "json" && (
-                    <JsonEditor
-                      value={inputs?.[f.key]}
-                      onChange={(parsed) => handleChange(f.key, parsed)}
-                      placeholder={
-                        f.key === "tags"
-                          ? '["Legal","R&D"]'
-                          : '{"linkedin":"...","email":"..."}'
-                      }
-                    />
-                  )}
-                </label>
-              );
-            })}
-          </div>
+                    {f.type === "json" && (
+                      <JsonEditor
+                        value={inputs?.[f.key]}
+                        onChange={(parsed) => handleChange(f.key, parsed)}
+                        placeholder={
+                          f.key === "tags"
+                            ? '["Legal","R&D"]'
+                            : '{"linkedin":"...","email":"..."}'
+                        }
+                      />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Footer (fixed) */}
@@ -1775,15 +2324,25 @@ function CollectionCrudView({ collection }) {
   }, [collection]);
 
   const buildFilter = (c, query) => {
+    console.log("Building filter for collection:", c, "with query:", query);
     if (!query) return "";
+
+    if (c === "orders")
+      return `order_number ~ "${query}" || user.email ~ "${query}"`;
+
     if (c === "ws_users")
       return `email ~ "${query}" || fname ~ "${query}" || lname ~ "${query}"`;
+
+    if (c === "discount") return `code ~ "${query}" || type ~ "${query}"`;
+
     if (c === "test" || c === "test_category" || c === "testimonial")
       return `name ~ "${query}"`;
+
     if (c === "cart") return `status ~ "${query}"`;
     if (c === "pages")
       return `label ~ "${query}" || path ~ "${query}" || external_url ~ "${query}"`;
     if (c === "teams") return `title ~ "${query}"`;
+
     return "";
   };
 
@@ -1795,9 +2354,11 @@ function CollectionCrudView({ collection }) {
           ? "cat_id,included_test"
           : collection === "cart"
             ? "user,test"
-            : collection === "teams"
-              ? MEMBERS_FIELD_CANDIDATES.join(",")
-              : undefined;
+            : collection === "orders"
+              ? "user,discount,tests"
+              : collection === "teams"
+                ? MEMBERS_FIELD_CANDIDATES.join(",")
+                : undefined;
 
       const sort =
         cfg?.sort ?? (collection === "pages" ? "order,label" : "-updated");
@@ -1809,6 +2370,10 @@ function CollectionCrudView({ collection }) {
         filter: buildFilter(collection, q),
         expand,
       });
+
+      console.log("ORDERS expand:", expand);
+      console.log("ORDERS sample row:", res?.items?.[0]);
+      console.log("ORDERS keys:", Object.keys(res?.items?.[0] || {}));
 
       setItems(res.items || []);
       setPage(pageNo);
@@ -1868,10 +2433,32 @@ function CollectionCrudView({ collection }) {
           </label>
         )} */}
 
-        {/* <UIButton onClick={openAdd}>
-          <Plus className="h-4 w-4" />
-          Add New
-        </UIButton> */}
+        {collection === "discount" ? (
+          <UIButton
+            onClick={() => {
+              // seed defaults for new discount
+              setEditRow({
+                code: "",
+                type: "percent",
+                discount: 0,
+                start_date: "",
+                end_date: "",
+                max_uses: "",
+                uses: 0,
+              });
+              setModalOpen(true);
+            }}
+            className="mb-5"
+          >
+            <Plus className="h-4 w-4" />
+            Add Discount
+          </UIButton>
+        ) : (
+          <UIButton onClick={openAdd} className="mb-5">
+            <Plus className="h-4 w-4" />
+            Add New
+          </UIButton>
+        )}
       </div>
 
       <div className="rounded-xl border border-slate-200 overflow-hidden">
@@ -1923,6 +2510,7 @@ function CollectionCrudView({ collection }) {
                     >
                       <button
                         className="rounded-lg p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                        disabled={collection === "orders"}
                         onClick={() => remove(row)}
                         title="Delete"
                       >
